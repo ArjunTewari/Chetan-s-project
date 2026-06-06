@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import "./animations.css";
 
 // ─── Config ────────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3001";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 type Role = "user" | "assistant" | "system";
