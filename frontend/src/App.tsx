@@ -146,13 +146,42 @@ export default function App() {
     return () => clearInterval(interval);
   }, [refreshConvList]);
 
-  // Create conversation on mount
+  // Init: on mount, load the most recent existing conversation or create one if none exist.
+  // Never create a new conversation on every page load — that causes sidebar spam.
   useEffect(() => {
-    fetch(`${API_BASE}/conversations`, { method: "POST" })
-      .then((r) => r.json())
-      .then((d) => { setConvId(d.conversationId); refreshConvList(); })
-      .catch(() => setConvId(1));
-  }, [refreshConvList]);
+    (async () => {
+      try {
+        const list = await fetch(`${API_BASE}/conversations`).then((r) => r.json()) as ConvListItem[];
+        setConvList(list);
+        if (list.length === 0) {
+          // No history at all — create the very first conversation
+          const d = await fetch(`${API_BASE}/conversations`, { method: "POST" }).then((r) => r.json()) as { conversationId: number };
+          setConvId(d.conversationId);
+          return;
+        }
+        // Reuse the most recent conversation
+        const recent = list[0];
+        setConvId(recent.id);
+        if (recent.messageCount > 0) {
+          const data = await fetch(`${API_BASE}/conversations/${recent.id}/messages`).then((r) => r.json()) as {
+            messages: { role: "user" | "assistant"; content: string }[];
+            hasReport: boolean;
+          };
+          const WELCOME = "Welcome to **Emerald AI** — Air Quality Media Intelligence.\n\nTell me which organisations and date range you want to analyse, and I'll generate a full report. Or ask me anything about a report you've already generated.";
+          setMessages([
+            { id: uid(), role: "system", content: WELCOME },
+            ...data.messages.map((m) => ({ id: uid(), role: m.role, content: m.content })),
+          ]);
+          if (data.messages.some((m) => m.role === "user")) setWelcomeGone(true);
+          if (data.hasReport) {
+            const html = await fetch(`${API_BASE}/conversations/${recent.id}/report`).then((r) => r.text()).catch(() => null);
+            if (html) { setReportHtml(html); setShowReport(true); }
+          }
+        }
+      } catch { setConvId(1); }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run exactly once on mount — never re-create a conversation on refresh
 
   // Load an existing conversation by ID
   const loadConversation = useCallback(async (id: number) => {
