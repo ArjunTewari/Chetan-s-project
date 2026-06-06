@@ -1,4 +1,4 @@
-// server.ts — Express HTTP + SSE server
+// server.ts — Express HTTP + SSE server (PostgreSQL-backed)
 import { config } from "dotenv";
 import path from "path";
 config({ path: path.resolve(__dirname, "../.env"), override: true });
@@ -10,6 +10,7 @@ import { generatePPTX } from "./pptxGenerator";
 import { type CalcResult } from "./calculator";
 import { getAuthUrl, exchangeCode, isAuthorized } from "./youtubeOAuth";
 import { logger } from "./logger";
+import { pool, initSchema } from "./db";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -20,27 +21,66 @@ const PORT = process.env.PORT ?? 3001;
 app.use(
   cors({
     origin: process.env.ALLOWED_ORIGIN ?? "*",
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type"],
   })
 );
 app.use(express.json({ limit: "2mb" }));
 
 // ---------------------------------------------------------------------------
-// In-memory conversation store (replace with DB for production)
+// DB helpers
 // ---------------------------------------------------------------------------
-interface ConversationRecord {
-  id: number;
-  messages: ConversationMessage[];
-  statsJson?: string;
-  htmlReport?: string;
-  reportMeta?: ReportMeta;      // persisted rich meta for section updates
-  createdAt: Date;
-  updatedAt: Date;
+
+async function getConversationMessages(convId: number): Promise<ConversationMessage[]> {
+  const result = await pool.query(
+    "SELECT role, content FROM messages WHERE conversation_id = $1 ORDER BY id ASC",
+    [convId]
+  );
+  return result.rows as ConversationMessage[];
 }
 
-const conversations = new Map<number, ConversationRecord>();
-let nextConvId = 1;
+async function getConversationReport(convId: number): Promise<{
+  htmlReport: string | null;
+  statsJson: string | null;
+  reportMeta: ReportMeta | null;
+} | null> {
+  const result = await pool.query(
+    "SELECT html_report, stats_json, report_meta FROM reports WHERE conversation_id = $1",
+    [convId]
+  );
+  if (result.rows.length === 0) return { htmlReport: null, statsJson: null, reportMeta: null };
+  const row = result.rows[0];
+  return {
+    htmlReport: row.html_report ?? null,
+    statsJson: row.stats_json ?? null,
+    reportMeta: row.report_meta ?? null,
+  };
+}
+
+async function upsertReport(
+  convId: number,
+  htmlReport: string | null,
+  statsJson: string | null,
+  reportMeta: ReportMeta | null
+): Promise<void> {
+  const orgs: string[] = reportMeta?.orgs ?? [];
+  const dateFrom: string = (reportMeta?.date_range as { from?: string } | undefined)?.from ?? "";
+  const dateTo: string = (reportMeta?.date_range as { to?: string } | undefined)?.to ?? "";
+
+  await pool.query(
+    `INSERT INTO reports (conversation_id, html_report, stats_json, report_meta, orgs, date_from, date_to, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+     ON CONFLICT (conversation_id) DO UPDATE SET
+       html_report  = EXCLUDED.html_report,
+       stats_json   = EXCLUDED.stats_json,
+       report_meta  = EXCLUDED.report_meta,
+       orgs         = EXCLUDED.orgs,
+       date_from    = EXCLUDED.date_from,
+       date_to      = EXCLUDED.date_to,
+       updated_at   = NOW()`,
+    [convId, htmlReport, statsJson, reportMeta ? JSON.stringify(reportMeta) : null, orgs, dateFrom, dateTo]
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -55,12 +95,10 @@ app.get("/health", (_req, res) => {
 // YouTube OAuth2 routes
 // ---------------------------------------------------------------------------
 
-/** Step 1 — redirect browser to Google consent screen */
 app.get("/youtube/auth", (_req, res) => {
   res.redirect(getAuthUrl());
 });
 
-/** Step 2 — Google redirects here with ?code=… */
 app.get("/youtube/callback", async (req, res) => {
   const code = req.query.code as string | undefined;
   if (!code) { res.status(400).send("Missing code parameter"); return; }
@@ -77,65 +115,102 @@ app.get("/youtube/callback", async (req, res) => {
   }
 });
 
-/** Status check for the frontend */
 app.get("/youtube/status", (_req, res) => {
   res.json({ authorized: isAuthorized() });
 });
 
+// ---------------------------------------------------------------------------
+// Conversation routes
+// ---------------------------------------------------------------------------
+
 /** Create a new conversation */
-app.post("/conversations", (_req, res) => {
-  const id = nextConvId++;
-  conversations.set(id, {
-    id,
-    messages: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-  res.json({ conversationId: id });
+app.post("/conversations", async (_req, res) => {
+  try {
+    const result = await pool.query(
+      "INSERT INTO conversations DEFAULT VALUES RETURNING id"
+    );
+    const id: number = result.rows[0].id;
+    res.json({ conversationId: id });
+  } catch (err) {
+    logger.error({ err }, "Failed to create conversation");
+    res.status(500).json({ error: "Failed to create conversation" });
+  }
 });
 
-/** List conversations */
-app.get("/conversations", (_req, res) => {
-  const list = Array.from(conversations.values())
-    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-    .map((c) => {
-      const firstUser = c.messages.find((m) => m.role === "user");
+/** List conversations with report metadata */
+app.get("/conversations", async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        c.id,
+        c.created_at,
+        c.updated_at,
+        COUNT(m.id)::int AS message_count,
+        (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY id ASC LIMIT 1) AS first_user_msg,
+        r.orgs,
+        r.date_from,
+        r.date_to,
+        (r.id IS NOT NULL AND r.html_report IS NOT NULL) AS has_report
+      FROM conversations c
+      LEFT JOIN messages m ON m.conversation_id = c.id
+      LEFT JOIN reports r ON r.conversation_id = c.id
+      GROUP BY c.id, c.created_at, c.updated_at, r.id, r.orgs, r.date_from, r.date_to, r.html_report
+      ORDER BY c.updated_at DESC
+    `);
+
+    const list = result.rows.map((row) => {
+      const orgs: string[] = row.orgs ?? [];
+      const hasReport: boolean = row.has_report ?? false;
+      const firstMsg: string = row.first_user_msg ?? "";
+
+      let title: string;
+      if (hasReport && orgs.length > 0) {
+        const dateRange = row.date_from && row.date_to
+          ? ` | ${row.date_from} – ${row.date_to}`
+          : "";
+        title = orgs.join(", ") + dateRange;
+      } else {
+        title = firstMsg.slice(0, 60) || "New conversation";
+      }
+
       return {
-        id: c.id,
-        title: firstUser?.content?.slice(0, 60) ?? "New conversation",
-        messageCount: c.messages.length,
-        hasReport: !!c.htmlReport,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
+        id: row.id,
+        title,
+        messageCount: row.message_count,
+        hasReport,
+        orgs,
+        dateFrom: row.date_from ?? null,
+        dateTo: row.date_to ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
       };
     });
-  res.json(list);
+
+    res.json(list);
+  } catch (err) {
+    logger.error({ err }, "Failed to list conversations");
+    res.status(500).json({ error: "Failed to list conversations" });
+  }
 });
 
 /** Delete a conversation */
-app.delete("/conversations/:id", (req, res) => {
+app.delete("/conversations/:id", async (req, res) => {
   const id = parseInt(req.params.id);
-  if (!conversations.has(id)) {
-    res.status(404).json({ error: "Conversation not found" });
-    return;
+  try {
+    const check = await pool.query("SELECT id FROM conversations WHERE id = $1", [id]);
+    if (check.rows.length === 0) {
+      res.status(404).json({ error: "Conversation not found" });
+      return;
+    }
+    await pool.query("DELETE FROM conversations WHERE id = $1", [id]);
+    res.json({ deleted: id });
+  } catch (err) {
+    logger.error({ err }, "Failed to delete conversation");
+    res.status(500).json({ error: "Failed to delete conversation" });
   }
-  conversations.delete(id);
-  res.json({ deleted: id });
 });
 
-/**
- * POST /conversations/:id/chat
- *
- * Body: { message: string }
- * Streams SSE events back:
- *   { type: "text", content: string }
- *   { type: "tool_start", tool: string, label: string }
- *   { type: "tool_done", tool: string }
- *   { type: "report_html", html: string }
- *   { type: "cost", inputTokens, outputTokens, costUsd }
- *   { type: "done", assistantText, inputTokens, outputTokens, costUsd }
- *   { type: "error", message: string }
- */
+/** Chat endpoint — streams SSE */
 app.post("/conversations/:id/chat", async (req, res) => {
   const id = parseInt(req.params.id);
   const { message } = req.body as { message?: string };
@@ -145,42 +220,55 @@ app.post("/conversations/:id/chat", async (req, res) => {
     return;
   }
 
-  let conv = conversations.get(id);
-  if (!conv) {
-    // Auto-create if not found
-    conv = {
-      id,
-      messages: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    conversations.set(id, conv);
-  }
-
-  // Set SSE headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
-
   try {
+    // Ensure conversation exists (auto-create if missing)
+    const convCheck = await pool.query("SELECT id FROM conversations WHERE id = $1", [id]);
+    if (convCheck.rows.length === 0) {
+      await pool.query("INSERT INTO conversations (id) VALUES ($1)", [id]);
+    }
+
+    // Load history and existing report data
+    const history = await getConversationMessages(id);
+    const reportData = await getConversationReport(id);
+
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
     const result = await runAgent({
       conversationId: id,
       userMessage: message,
-      history: conv.messages,
+      history,
       res,
-      reportStatsJson: conv.statsJson ?? null,
-      reportMeta: conv.reportMeta ?? null,
+      reportStatsJson: reportData?.statsJson ?? null,
+      reportMeta: reportData?.reportMeta ?? null,
     });
 
-    // Persist conversation
-    conv.messages.push({ role: "user", content: message });
-    conv.messages.push({ role: "assistant", content: result.assistantText });
-    if (result.statsJson) conv.statsJson = result.statsJson;
-    if (result.htmlReport) conv.htmlReport = result.htmlReport;
-    if (result.meta) conv.reportMeta = result.meta;
-    conv.updatedAt = new Date();
+    // Persist user + assistant messages
+    await pool.query(
+      "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)",
+      [id, "user", message]
+    );
+    await pool.query(
+      "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)",
+      [id, "assistant", result.assistantText]
+    );
+
+    // Persist report if generated/updated
+    if (result.htmlReport || result.statsJson || result.meta) {
+      await upsertReport(
+        id,
+        result.htmlReport ?? reportData?.htmlReport ?? null,
+        result.statsJson ?? reportData?.statsJson ?? null,
+        result.meta ?? reportData?.reportMeta ?? null
+      );
+    }
+
+    // Update conversation updated_at
+    await pool.query("UPDATE conversations SET updated_at = NOW() WHERE id = $1", [id]);
 
     sendEvent(res, {
       type: "done",
@@ -188,7 +276,7 @@ app.post("/conversations/:id/chat", async (req, res) => {
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
       costUsd: result.costUsd,
-      hasReport: !!result.htmlReport,
+      hasReport: !!(result.htmlReport ?? reportData?.htmlReport),
     });
   } catch (err) {
     logger.error({ err }, "Agent error");
@@ -199,47 +287,69 @@ app.post("/conversations/:id/chat", async (req, res) => {
 });
 
 /** GET the latest HTML report for a conversation */
-app.get("/conversations/:id/report", (req, res) => {
+app.get("/conversations/:id/report", async (req, res) => {
   const id = parseInt(req.params.id);
-  const conv = conversations.get(id);
-  if (!conv?.htmlReport) {
-    res.status(404).json({ error: "No report found for this conversation" });
-    return;
+  try {
+    const result = await pool.query(
+      "SELECT html_report FROM reports WHERE conversation_id = $1",
+      [id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].html_report) {
+      res.status(404).json({ error: "No report found for this conversation" });
+      return;
+    }
+    res.setHeader("Content-Type", "text/html");
+    res.send(result.rows[0].html_report);
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch report");
+    res.status(500).json({ error: "Failed to fetch report" });
   }
-  res.setHeader("Content-Type", "text/html");
-  res.send(conv.htmlReport);
 });
 
 /** GET messages for a conversation */
-app.get("/conversations/:id/messages", (req, res) => {
+app.get("/conversations/:id/messages", async (req, res) => {
   const id = parseInt(req.params.id);
-  const conv = conversations.get(id);
-  if (!conv) {
-    res.status(404).json({ error: "Conversation not found" });
-    return;
+  try {
+    const convCheck = await pool.query(
+      "SELECT id, created_at, updated_at FROM conversations WHERE id = $1",
+      [id]
+    );
+    if (convCheck.rows.length === 0) {
+      res.status(404).json({ error: "Conversation not found" });
+      return;
+    }
+    const messages = await getConversationMessages(id);
+    const reportData = await getConversationReport(id);
+    res.json({
+      id,
+      messages,
+      hasReport: !!(reportData?.htmlReport),
+      hasDraft: false,
+      createdAt: convCheck.rows[0].created_at,
+      updatedAt: convCheck.rows[0].updated_at,
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch messages");
+    res.status(500).json({ error: "Failed to fetch messages" });
   }
-  res.json({
-    id: conv.id,
-    messages: conv.messages,
-    hasReport: !!conv.htmlReport,
-    hasDraft: false,
-    createdAt: conv.createdAt,
-    updatedAt: conv.updatedAt,
-  });
 });
 
 /** GET the PPTX report for a conversation */
 app.get("/conversations/:id/report.pptx", async (req, res) => {
   const id = parseInt(req.params.id);
-  const conv = conversations.get(id);
-  if (!conv?.statsJson || !conv?.reportMeta) {
-    res.status(404).json({ error: "No report found — generate a report first" });
-    return;
-  }
   try {
-    const calcResult = JSON.parse(conv.statsJson) as CalcResult;
-    const buffer = await generatePPTX(conv.reportMeta, calcResult);
-    const filename = `emerald-report-${new Date().toISOString().slice(0,10)}.pptx`;
+    const result = await pool.query(
+      "SELECT stats_json, report_meta FROM reports WHERE conversation_id = $1",
+      [id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].stats_json || !result.rows[0].report_meta) {
+      res.status(404).json({ error: "No report found — generate a report first" });
+      return;
+    }
+    const calcResult = JSON.parse(result.rows[0].stats_json) as CalcResult;
+    const reportMeta = result.rows[0].report_meta as ReportMeta;
+    const buffer = await generatePPTX(reportMeta, calcResult);
+    const filename = `emerald-report-${new Date().toISOString().slice(0, 10)}.pptx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -250,22 +360,37 @@ app.get("/conversations/:id/report.pptx", async (req, res) => {
 });
 
 /** GET the stats JSON for a conversation */
-app.get("/conversations/:id/stats", (req, res) => {
+app.get("/conversations/:id/stats", async (req, res) => {
   const id = parseInt(req.params.id);
-  const conv = conversations.get(id);
-  if (!conv?.statsJson) {
-    res.status(404).json({ error: "No stats found for this conversation" });
-    return;
+  try {
+    const result = await pool.query(
+      "SELECT stats_json FROM reports WHERE conversation_id = $1",
+      [id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].stats_json) {
+      res.status(404).json({ error: "No stats found for this conversation" });
+      return;
+    }
+    res.setHeader("Content-Type", "application/json");
+    res.send(result.rows[0].stats_json);
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch stats");
+    res.status(500).json({ error: "Failed to fetch stats" });
   }
-  res.setHeader("Content-Type", "application/json");
-  res.send(conv.statsJson);
 });
 
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
-app.listen(PORT, () => {
-  logger.info(`Emerald AI backend running on port ${PORT}`);
-});
+initSchema()
+  .then(() => {
+    app.listen(PORT, () => {
+      logger.info(`Emerald AI backend running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    logger.error({ err }, "Failed to initialise database schema");
+    process.exit(1);
+  });
 
 export default app;

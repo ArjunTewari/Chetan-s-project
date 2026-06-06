@@ -28,6 +28,9 @@ interface ConvListItem {
   title: string;
   messageCount: number;
   hasReport: boolean;
+  orgs?: string[];
+  dateFrom?: string | null;
+  dateTo?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -178,10 +181,13 @@ export default function App() {
       } else {
         setWelcomeExiting(false); setWelcomeGone(false);
       }
-      // If the conversation has a report, fetch the HTML
+      // If the conversation has a report, fetch the HTML and open preview
       if (data.hasReport) {
         const html = await fetch(`${API_BASE}/conversations/${id}/report`).then((r) => r.text()).catch(() => null);
-        if (html) setReportHtml(html);
+        if (html) {
+          setReportHtml(html);
+          setShowReport(true);
+        }
       }
     } catch { /* ignore */ }
   }, [convId]);
@@ -427,6 +433,7 @@ export default function App() {
               const isActive = c.id === convId;
               const date = new Date(c.updatedAt);
               const dateStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+              const hasOrgs = c.hasReport && c.orgs && c.orgs.length > 0;
               return (
                 <button
                   key={c.id}
@@ -439,20 +446,37 @@ export default function App() {
                   onClick={() => loadConversation(c.id)}
                 >
                   <div style={styles.convItemHeader}>
-                    <span style={{ fontSize: 11, color: isActive ? "#e0e0e0" : "#333333", fontWeight: 600 }}>
-                      #{c.id}
-                    </span>
+                    {c.hasReport ? (
+                      <span style={{ fontSize: 11 }}>📊</span>
+                    ) : (
+                      <span style={{ fontSize: 10, color: isActive ? "#888888" : "#333333", fontWeight: 600 }}>
+                        #{c.id}
+                      </span>
+                    )}
                     <span style={{ fontSize: 10, color: "#484f58" }}>{dateStr}</span>
                     {c.hasReport && (
-                      <span style={{ fontSize: 9, background: "rgba(255,255,255,0.06)", color: "#888888", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "1px 5px" }}>
+                      <span style={{ fontSize: 9, background: "rgba(255,255,255,0.06)", color: "#666666", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, padding: "1px 5px", marginLeft: "auto" }}>
                         report
                       </span>
                     )}
                   </div>
-                  <div style={styles.convItemTitle}>
-                    {c.title.length > 52 ? c.title.slice(0, 52) + "…" : c.title}
-                  </div>
-                  {c.messageCount > 0 && (
+                  {hasOrgs ? (
+                    <>
+                      <div style={{ ...styles.convItemTitle, color: isActive ? "#f0f0f0" : "#dddddd", fontWeight: 600, fontSize: 12, lineHeight: 1.3 }}>
+                        {(c.orgs ?? []).join(", ")}
+                      </div>
+                      {c.dateFrom && c.dateTo && (
+                        <div style={{ fontSize: 10, color: "#555555", marginTop: 3 }}>
+                          {c.dateFrom} – {c.dateTo}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={styles.convItemTitle}>
+                      {c.title.length > 52 ? c.title.slice(0, 52) + "…" : c.title}
+                    </div>
+                  )}
+                  {!c.hasReport && c.messageCount > 0 && (
                     <div style={{ fontSize: 10, color: "#484f58", marginTop: 2 }}>
                       {c.messageCount} message{c.messageCount !== 1 ? "s" : ""}
                     </div>
