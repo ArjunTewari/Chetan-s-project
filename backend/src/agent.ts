@@ -438,6 +438,8 @@ interface ToolResultStore {
   meta?: ReportMeta;
   htmlReport?: string;
   claudeCostUsd?: number; // accumulated before generate_report is called
+  llmCostUsd?: number; // accumulated from fetch_llm_visibility
+  serperCostUsd?: number; // accumulated from fetch_serper
 }
 
 // ---------------------------------------------------------------------------
@@ -451,10 +453,15 @@ async function executeTool(
 ): Promise<string> {
   try {
     switch (toolName) {
-      case "fetch_serper":
-        return JSON.stringify(
-          await fetchSerper(toolInput as unknown as Parameters<typeof fetchSerper>[0])
-        );
+      case "fetch_serper": {
+        const result = await fetchSerper(toolInput as unknown as Parameters<typeof fetchSerper>[0]);
+        if (result.serper_requests) {
+          const serperCost = result.serper_requests * 0.001;
+          store.serperCostUsd = (store.serperCostUsd ?? 0) + serperCost;
+          sendEvent(res, { type: "serper_cost", costUsd: store.serperCostUsd });
+        }
+        return JSON.stringify(result);
+      }
 
       case "fetch_youtube":
         return JSON.stringify(
@@ -471,12 +478,20 @@ async function executeTool(
           await fetchSemrush(toolInput as unknown as Parameters<typeof fetchSemrush>[0])
         );
 
-      case "fetch_llm_visibility":
-        return JSON.stringify(
-          await fetchLLMVisibility(
-            toolInput as unknown as Parameters<typeof fetchLLMVisibility>[0]
-          )
+      case "fetch_llm_visibility": {
+        const result = await fetchLLMVisibility(
+          toolInput as unknown as Parameters<typeof fetchLLMVisibility>[0]
         );
+        const llmCosts = result.costs ?? [];
+        const llmCost = llmCosts.reduce((s, c) => s + (c.cost_usd ?? 0), 0);
+        store.llmCostUsd = (store.llmCostUsd ?? 0) + llmCost;
+        sendEvent(res, {
+          type: "llm_cost",
+          costUsd: store.llmCostUsd,
+          llm_api_costs: llmCosts,
+        });
+        return JSON.stringify(result);
+      }
 
       case "fetch_wikipedia":
         return JSON.stringify(

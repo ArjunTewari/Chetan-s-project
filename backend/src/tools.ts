@@ -106,9 +106,11 @@ export async function fetchSerper(input: FetchSerperInput) {
 
   const results: Record<string, Record<string, OutletResult>> = {};
   const tbs = buildSerperDateRange(input.date_range.from, input.date_range.to);
+  let serperRequestCount = 0;
 
   /** Core Serper news request */
   const callSerper = async (q: string): Promise<ArticleRow[] | null> => {
+    serperRequestCount++;
     try {
       const r = await fetch("https://google.serper.dev/news", {
         method: "POST",
@@ -272,7 +274,7 @@ export async function fetchSerper(input: FetchSerperInput) {
   );
   logger.info({ data_quality }, "Serper data quality summary");
 
-  return { stub: false, data: results, date_range: input.date_range, tone_evidence, data_quality };
+  return { stub: false, data: results, date_range: input.date_range, tone_evidence, data_quality, serper_requests: serperRequestCount };
 }
 
 function emptySerperResult() {
@@ -314,7 +316,7 @@ function fetchSerperStub(input: FetchSerperInput) {
       };
     }
   }
-  return { stub: true, data: results, date_range: input.date_range };
+  return { stub: true, data: results, date_range: input.date_range, serper_requests: 0 };
 }
 
 // ---------------------------------------------------------------------------

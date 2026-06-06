@@ -7,6 +7,8 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 // ─── Types ─────────────────────────────────────────────────────────────────
 type Role = "user" | "assistant" | "system";
 
+interface LLMApiCost { service: string; model: string; requests: number; input_tokens: number; output_tokens: number; cost_usd: number; }
+
 interface Message {
   id: string;
   role: Role;
@@ -89,7 +91,16 @@ export default function App() {
   const [draftPayload, setDraftPayload] = useState<DraftPayload | null>(null); // pre-approval review
   const [showDraft, setShowDraft] = useState(false);
   const [editDraft, setEditDraft] = useState("");
-  const [sessionCost, setSessionCost] = useState({ claude: 0, llm: 0, serper: 0 });
+  const [sessionCost, setSessionCost] = useState({
+    claude: 0,       // cumulative Claude API cost
+    llm: 0,          // cumulative LLM-visibility cost (ChatGPT, Perplexity, Gemini)
+    serper: 0,       // cumulative Serper cost
+    cacheWrite: 0,   // cache write tokens (Claude)
+    cacheRead: 0,    // cache read tokens (Claude)
+    inputTokens: 0,
+    outputTokens: 0,
+    llmDetails: [] as LLMApiCost[],
+  });
   const [ytStatus, setYtStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
   const [convList, setConvList] = useState<ConvListItem[]>([]);
   const [isAuthed, setIsAuthed] = useState(() => sessionStorage.getItem("emerald_authed") === "1");
@@ -204,7 +215,7 @@ export default function App() {
       setShowReport(false);
       setDraftPayload(null);
       setShowDraft(false);
-      setSessionCost({ claude: 0, llm: 0, serper: 0 });
+      setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] });
       setEditDraft("");
       // Reset welcome state based on whether loaded conv has user messages
       if (data.messages.some((m) => m.role === "user")) {
@@ -233,7 +244,7 @@ export default function App() {
         setConvId(data.conversationId);
         setMessages([{ id: uid(), role: "system", content: "Welcome to **Emerald AI** — Air Quality Media Intelligence.\n\nTell me which organisations and date range you want to analyse, and I'll generate a full report. Or ask me anything about a report you've already generated." }]);
         setReportHtml(null); setShowReport(false); setDraftPayload(null); setShowDraft(false);
-        setSessionCost({ claude: 0, llm: 0, serper: 0 }); setEditDraft("");
+        setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] }); setEditDraft("");
         setWelcomeExiting(false); setWelcomeGone(false);
       }
       refreshConvList();
@@ -253,7 +264,7 @@ export default function App() {
       setShowReport(false);
       setDraftPayload(null);
       setShowDraft(false);
-      setSessionCost({ claude: 0, llm: 0, serper: 0 });
+      setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] });
       setEditDraft("");
       setWelcomeExiting(false); setWelcomeGone(false);
       refreshConvList();
@@ -407,7 +418,11 @@ export default function App() {
           case "cost":
             setSessionCost(prev => ({
               ...prev,
-              claude: prev.claude + (evt.costUsd as number),
+              claude: (evt.costUsd as number), // already cumulative from backend
+              inputTokens: evt.inputTokens as number,
+              outputTokens: evt.outputTokens as number,
+              cacheWrite: evt.cacheWriteTokens as number,
+              cacheRead: evt.cacheReadTokens as number,
             }));
             return {
               ...m,
@@ -421,14 +436,15 @@ export default function App() {
           case "llm_cost":
             setSessionCost(prev => ({
               ...prev,
-              llm: prev.llm + (evt.costUsd as number),
+              llm: (evt.costUsd as number), // already cumulative from backend
+              llmDetails: (evt.llm_api_costs as LLMApiCost[]) ?? prev.llmDetails,
             }));
             return m;
 
           case "serper_cost":
             setSessionCost(prev => ({
               ...prev,
-              serper: prev.serper + (evt.costUsd as number),
+              serper: (evt.costUsd as number), // already cumulative from backend
             }));
             return m;
 
@@ -625,27 +641,51 @@ export default function App() {
               ${(sessionCost.claude + sessionCost.llm + sessionCost.serper).toFixed(4)}
             </div>
             <div style={styles.costWidgetBreakdown}>
+              {/* Claude */}
               {sessionCost.claude > 0 && (
                 <div style={styles.costRow}>
-                  <span>Claude API</span><span>${sessionCost.claude.toFixed(4)}</span>
+                  <span>Claude API</span>
+                  <span>${sessionCost.claude.toFixed(4)}</span>
                 </div>
               )}
+              {/* Claude token detail */}
+              {(sessionCost.inputTokens > 0 || sessionCost.outputTokens > 0) && (
+                <div style={{ fontSize: 9, color: "#333333", marginTop: 2, marginBottom: 6, paddingLeft: 4, lineHeight: 1.4 }}>
+                  {sessionCost.inputTokens > 0 && <span>{sessionCost.inputTokens.toLocaleString()} in</span>}
+                  {sessionCost.inputTokens > 0 && sessionCost.outputTokens > 0 && <span> · </span>}
+                  {sessionCost.outputTokens > 0 && <span>{sessionCost.outputTokens.toLocaleString()} out</span>}
+                  {sessionCost.cacheWrite > 0 && <span> · {sessionCost.cacheWrite.toLocaleString()} CW</span>}
+                  {sessionCost.cacheRead > 0 && <span> · {sessionCost.cacheRead.toLocaleString()} CR</span>}
+                </div>
+              )}
+              {/* LLM */}
               {sessionCost.llm > 0 && (
                 <div style={styles.costRow}>
-                  <span>LLM queries</span><span>${sessionCost.llm.toFixed(4)}</span>
+                  <span>LLM visibility</span>
+                  <span>${sessionCost.llm.toFixed(4)}</span>
                 </div>
               )}
+              {/* LLM per-service detail */}
+              {sessionCost.llmDetails.length > 0 && (
+                <div style={{ fontSize: 9, color: "#333333", marginTop: 2, marginBottom: 6, paddingLeft: 4, lineHeight: 1.4 }}>
+                  {sessionCost.llmDetails.map((c, i) => (
+                    <span key={i}>
+                      {c.service}: {c.requests} req · {c.input_tokens.toLocaleString()} in · {c.output_tokens.toLocaleString()} out = ${c.cost_usd.toFixed(4)}
+                      {i < sessionCost.llmDetails.length - 1 && <br />}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {/* Serper */}
               {sessionCost.serper > 0 && (
                 <div style={styles.costRow}>
-                  <span>Serper search</span><span>${sessionCost.serper.toFixed(4)}</span>
+                  <span>Serper search</span>
+                  <span>${sessionCost.serper.toFixed(4)}</span>
                 </div>
               )}
             </div>
-            <div style={{ fontSize: 9, color: "#333333", marginTop: 6, lineHeight: 1.5 }}>
-              High cost? Each report fetches live data across<br />
-              social, media, search &amp; LLM APIs, then runs<br />
-              Claude Sonnet 4 to analyse all of it. Subsequent<br />
-              questions on the same data cost ~$0.02.
+            <div style={{ fontSize: 9, color: "#333333", marginTop: 8, lineHeight: 1.5 }}>
+              Each report fetches live data across social, media, search &amp; LLM APIs, then runs Claude Sonnet 4 to analyse all of it. Subsequent questions on the same data cost ~$0.02.
             </div>
           </div>
         )}
