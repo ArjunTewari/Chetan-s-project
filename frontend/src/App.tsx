@@ -90,7 +90,6 @@ export default function App() {
   const [reportUpdated, setReportUpdated] = useState(false);
   const [draftPayload, setDraftPayload] = useState<DraftPayload | null>(null); // pre-approval review
   const [showDraft, setShowDraft] = useState(false);
-  const [editDraft, setEditDraft] = useState("");
   const [sessionCost, setSessionCost] = useState({
     claude: 0,       // cumulative Claude API cost
     llm: 0,          // cumulative LLM-visibility cost (ChatGPT, Perplexity, Gemini)
@@ -216,7 +215,6 @@ export default function App() {
       setDraftPayload(null);
       setShowDraft(false);
       setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] });
-      setEditDraft("");
       // Reset welcome state based on whether loaded conv has user messages
       if (data.messages.some((m) => m.role === "user")) {
         setWelcomeExiting(false); setWelcomeGone(true);
@@ -244,7 +242,7 @@ export default function App() {
         setConvId(data.conversationId);
         setMessages([{ id: uid(), role: "system", content: "Welcome to **Emerald AI** — Air Quality Media Intelligence.\n\nTell me which organisations and date range you want to analyse, and I'll generate a full report. Or ask me anything about a report you've already generated." }]);
         setReportHtml(null); setShowReport(false); setDraftPayload(null); setShowDraft(false);
-        setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] }); setEditDraft("");
+        setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] });
         setWelcomeExiting(false); setWelcomeGone(false);
       }
       refreshConvList();
@@ -265,7 +263,6 @@ export default function App() {
       setDraftPayload(null);
       setShowDraft(false);
       setSessionCost({ claude: 0, llm: 0, serper: 0, cacheWrite: 0, cacheRead: 0, inputTokens: 0, outputTokens: 0, llmDetails: [] });
-      setEditDraft("");
       setWelcomeExiting(false); setWelcomeGone(false);
       refreshConvList();
     } catch { /* ignore */ }
@@ -882,93 +879,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* Body: iframe + edit panel side by side */}
-          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* Body: iframe full width */}
+          <div style={{ flex: 1, overflow: "hidden" }}>
             <iframe
               style={styles.reportFrame}
               srcDoc={reportHtml}
               title="Intelligence Report"
               sandbox="allow-same-origin"
             />
-
-            {/* Edit / review panel */}
-            <div style={styles.editPanel}>
-              <div style={styles.editPanelTitle}>Review & Edit</div>
-
-              {/* Quick section edits */}
-              <div style={styles.editPanelLabel}>Request a section change:</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-                {["Social", "Media", "AEO / LLM Visibility", "Action Matrix", "Scorecards"].map((sec) => (
-                  <button
-                    key={sec}
-                    style={styles.sectionBtn}
-                    className="section-btn"
-                    onClick={() => setEditDraft(`Please update the ${sec} section: `)}
-                  >
-                    ✏ {sec}
-                  </button>
-                ))}
-              </div>
-
-              {/* Free-text change request */}
-              <div style={styles.editPanelLabel}>Or describe your change:</div>
-              <textarea
-                style={styles.editTextarea}
-                placeholder="e.g. Update the AEO section with actual ChatGPT query results..."
-                value={editDraft}
-                onChange={(e) => setEditDraft(e.target.value)}
-              />
-              <button
-                style={{
-                  ...styles.reportBtn,
-                  background: editDraft.trim() ? "rgba(0,179,126,0.2)" : "rgba(255,255,255,0.04)",
-                  color: editDraft.trim() ? "#00b37e" : "#666",
-                  marginTop: 8,
-                  width: "100%",
-                  justifyContent: "center",
-                  cursor: editDraft.trim() ? "pointer" : "default",
-                }}
-                disabled={!editDraft.trim()}
-                onClick={() => {
-                  if (!editDraft.trim()) return;
-                  // Send the message immediately (don't require user to find the chat box)
-                  const draft = editDraft.trim();
-                  setEditDraft("");
-                  setShowReport(false); // close to show progress in chat
-                  setInput(draft);
-                  // Trigger send on next tick (after input state updates)
-                  setTimeout(() => {
-                    const btn = document.querySelector("[data-send-btn]") as HTMLButtonElement;
-                    btn?.click();
-                  }, 50);
-                }}
-              >
-                Send to Chat →
-              </button>
-
-              <div style={styles.editPanelLabel} >Regenerate options:</div>
-              {[
-                "Regenerate the full report with updated data",
-                "Add LLM visibility queries to the report",
-                "Rewrite the Action Matrix with more specific recommendations",
-              ].map((prompt) => (
-                <button
-                  key={prompt}
-                  style={{ ...styles.sectionBtn, fontSize: 11, marginBottom: 4 }}
-                  onClick={() => {
-                    setEditDraft("");
-                    setShowReport(false);
-                    setInput(prompt);
-                    setTimeout(() => {
-                      const btn = document.querySelector("[data-send-btn]") as HTMLButtonElement;
-                      btn?.click();
-                    }, 50);
-                  }}
-                >
-                  ↺ {prompt}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       )}

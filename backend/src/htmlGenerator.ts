@@ -130,38 +130,7 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
   </div>
 </div>` : "";
 
-  // Cost breakdown
-  const costs = meta.api_costs ?? [];
-  const totalLLMCost  = costs.reduce((s, c) => s + c.cost_usd, 0);
-  const serperCost    = (meta.serper_requests ?? 0) * 0.001;
-  const totalCost     = totalLLMCost + (meta.claude_cost_usd ?? 0) + serperCost;
-  const costRows = costs.map(c => `
-    <tr>
-      <td>${c.service ?? "—"}</td>
-      <td>${c.model ?? "—"}</td>
-      <td>${c.requests ?? "—"}</td>
-      <td>${(c.input_tokens ?? 0).toLocaleString()}</td>
-      <td>${(c.output_tokens ?? 0).toLocaleString()}</td>
-      <td class="highlight">$${(c.cost_usd ?? 0).toFixed(4)}</td>
-    </tr>`).join("");
-  const claudeCostRow = meta.claude_cost_usd != null ? `
-    <tr>
-      <td>Claude (Anthropic)</td>
-      <td>claude-sonnet-4</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td class="highlight">$${meta.claude_cost_usd.toFixed(4)}</td>
-    </tr>` : "";
-  const serperRow = meta.serper_requests != null ? `
-    <tr>
-      <td>Serper</td>
-      <td>News API</td>
-      <td>${meta.serper_requests}</td>
-      <td>—</td>
-      <td>—</td>
-      <td class="highlight">$${(meta.serper_requests * 0.001).toFixed(4)}</td>
-    </tr>` : "";
+  // Cost data removed from report — only shown in sidebar widget
 
   // ── Social rows — Reach / Engagement sub-column grouping ──────────────────
   // Benchmark ER% per platform (Rival IQ 2025 Nonprofit medians)
@@ -660,23 +629,6 @@ ${wikiSection}
     </tr></thead>
     <tbody>${actionRows}</tbody>
   </table>
-</div>
-
-<!-- ══ COST ═══════════════════════════════════════════════════════════════════ -->
-<div id="cost" class="section">
-  <h2 class="section-title">API Cost Breakdown</h2>
-  <p class="section-desc">Token usage and cost for every external API call made to produce this report.</p>
-  <div class="cost-summary">
-    <div class="cost-card"><div class="cost-label">Total Report Cost</div><div class="cost-value">$${totalCost.toFixed(4)}</div></div>
-    <div class="cost-card"><div class="cost-label">LLM Visibility APIs</div><div class="cost-value">$${totalLLMCost.toFixed(4)}</div></div>
-    ${meta.claude_cost_usd != null ? `<div class="cost-card"><div class="cost-label">Claude (Agent)</div><div class="cost-value">$${meta.claude_cost_usd.toFixed(4)}</div></div>` : ""}
-    ${meta.serper_requests != null ? `<div class="cost-card"><div class="cost-label">Serper (${meta.serper_requests} req)</div><div class="cost-value">$${(meta.serper_requests * 0.001).toFixed(4)}</div></div>` : ""}
-  </div>
-  ${costs.length > 0 || meta.claude_cost_usd != null ? `
-  <table style="margin-top:24px">
-    <thead><tr><th>Service</th><th>Model</th><th>Requests</th><th>Input Tokens</th><th>Output Tokens</th><th>Cost (USD)</th></tr></thead>
-    <tbody>${costRows}${claudeCostRow}${serperRow}</tbody>
-  </table>` : `<p style="color:var(--text-muted);font-size:13px;margin-top:16px">No cost data recorded for this run.</p>`}
 </div>
 
 <footer class="footer">
