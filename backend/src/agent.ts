@@ -538,7 +538,9 @@ async function executeTool(
         const html = generateHTMLReport(meta, calcResult);
         store.htmlReport = html;
         store.statsJson = JSON.stringify(calcResult);
-        sendEvent(res, { type: "report_html", html });
+        // Send a lightweight signal — frontend fetches the full HTML from the API
+        // after receiving the "done" event. Avoid sending 100-300KB in a single SSE frame.
+        sendEvent(res, { type: "report_ready", html_length: html.length });
         return JSON.stringify({ success: true, html_length: html.length });
       }
 
@@ -577,7 +579,7 @@ async function executeTool(
         store.htmlReport = html;
         store.meta = richMeta;
         store.statsJson = JSON.stringify(calcResult);
-        sendEvent(res, { type: "report_html", html });
+        sendEvent(res, { type: "report_ready", html_length: html.length });
         sendEvent(res, { type: "section_complete", section });
         return JSON.stringify({ success: true, section_updated: section });
       }

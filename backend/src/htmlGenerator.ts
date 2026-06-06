@@ -61,9 +61,9 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
         </div>
       </div>
       <div class="yt-stats-row">
-        <div class="yt-stat"><div class="yt-stat-label">All-Time Views</div><div class="yt-stat-value">${ch.channel_total_views.toLocaleString()}</div></div>
-        <div class="yt-stat"><div class="yt-stat-label">Subscribers</div><div class="yt-stat-value">${ch.channel_subscribers.toLocaleString()}</div></div>
-        <div class="yt-stat"><div class="yt-stat-label">Total Videos</div><div class="yt-stat-value">${ch.channel_video_count.toLocaleString()}</div></div>
+        <div class="yt-stat"><div class="yt-stat-label">All-Time Views</div><div class="yt-stat-value">${(ch.channel_total_views ?? 0).toLocaleString()}</div></div>
+        <div class="yt-stat"><div class="yt-stat-label">Subscribers</div><div class="yt-stat-value">${(ch.channel_subscribers ?? 0).toLocaleString()}</div></div>
+        <div class="yt-stat"><div class="yt-stat-label">Total Videos</div><div class="yt-stat-value">${(ch.channel_video_count ?? 0).toLocaleString()}</div></div>
       </div>
       <div class="yt-top-title">Top 10 Videos by View Count</div>
       <table>
@@ -73,9 +73,9 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
             <td style="color:var(--text-muted)">${i + 1}</td>
             <td><a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="color:var(--emerald);text-decoration:none">${v.title}</a></td>
             <td style="color:var(--text-muted)">${new Date(v.publishedAt).toLocaleDateString()}</td>
-            <td class="highlight">${v.views.toLocaleString()}</td>
-            <td>${v.likes.toLocaleString()}</td>
-            <td>${v.comments.toLocaleString()}</td>
+            <td class="highlight">${(v.views ?? 0).toLocaleString()}</td>
+            <td>${(v.likes ?? 0).toLocaleString()}</td>
+            <td>${(v.comments ?? 0).toLocaleString()}</td>
           </tr>`).join("")}
         </tbody>
       </table>
@@ -137,12 +137,12 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
   const totalCost     = totalLLMCost + (meta.claude_cost_usd ?? 0) + serperCost;
   const costRows = costs.map(c => `
     <tr>
-      <td>${c.service}</td>
-      <td>${c.model}</td>
-      <td>${c.requests}</td>
-      <td>${c.input_tokens.toLocaleString()}</td>
-      <td>${c.output_tokens.toLocaleString()}</td>
-      <td class="highlight">$${c.cost_usd.toFixed(4)}</td>
+      <td>${c.service ?? "—"}</td>
+      <td>${c.model ?? "—"}</td>
+      <td>${c.requests ?? "—"}</td>
+      <td>${(c.input_tokens ?? 0).toLocaleString()}</td>
+      <td>${(c.output_tokens ?? 0).toLocaleString()}</td>
+      <td class="highlight">$${(c.cost_usd ?? 0).toFixed(4)}</td>
     </tr>`).join("");
   const claudeCostRow = meta.claude_cost_usd != null ? `
     <tr>
@@ -182,15 +182,15 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
     return `
       <tr>
         <td>${s.org}</td><td>${s.platform}</td>
-        <td>${s.impressions.toLocaleString()}</td>
-        <td>${s.total_engagement.toLocaleString()}</td>
-        <td class="highlight">${s.er_pct}%</td>
+        <td>${(s.impressions ?? 0).toLocaleString()}</td>
+        <td>${(s.total_engagement ?? 0).toLocaleString()}</td>
+        <td class="highlight">${s.er_pct ?? 0}%</td>
         <td style="color:var(--text-muted);font-size:12px">${benchmark}</td>
         <td>${vs}</td>
-        <td>${s.likes.toLocaleString()}</td>
-        <td>${s.shares > 0 ? s.shares.toLocaleString() : "—"}</td>
-        <td>${s.comments.toLocaleString()}</td>
-        <td>${s.saves > 0 ? s.saves.toLocaleString() : "—"}</td>
+        <td>${(s.likes ?? 0).toLocaleString()}</td>
+        <td>${(s.shares ?? 0) > 0 ? (s.shares ?? 0).toLocaleString() : "—"}</td>
+        <td>${(s.comments ?? 0).toLocaleString()}</td>
+        <td>${(s.saves ?? 0) > 0 ? (s.saves ?? 0).toLocaleString() : "—"}</td>
       </tr>`;
   }).join("");
 

@@ -80,6 +80,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  const [activeStage, setActiveStage] = useState<string | null>(null);
   const [welcomeExiting, setWelcomeExiting] = useState(false);
   const [welcomeGone, setWelcomeGone] = useState(false);
   const [reportHtml, setReportHtml] = useState<string | null>(null);
@@ -254,7 +255,7 @@ export default function App() {
           if (!line.startsWith("data: ")) continue;
           try {
             const evt = JSON.parse(line.slice(6));
-            handleEvent(evt, assistantMsg.id);
+            handleEvent(evt, assistantMsg.id, convId);
           } catch {
             // ignore malformed
           }
@@ -271,11 +272,12 @@ export default function App() {
     } finally {
       setLoading(false);
       setStreaming(false);
+      setActiveStage(null);
       refreshConvList(); // update title/count in sidebar after each response
     }
   }, [input, loading, convId]);
 
-  const handleEvent = (evt: Record<string, unknown>, msgId: string) => {
+  const handleEvent = (evt: Record<string, unknown>, msgId: string, currentConvId: number | null) => {
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id !== msgId) return m;
@@ -285,39 +287,75 @@ export default function App() {
             setStreaming(true);
             return { ...m, content: m.content + (evt.content as string) };
 
-          case "tool_start":
+          case "tool_start": {
+            const label = evt.label as string;
+            setActiveStage(label);
             return {
               ...m,
               toolEvents: [
                 ...(m.toolEvents ?? []),
-                {
-                  tool: evt.tool as string,
-                  label: evt.label as string,
-                  status: "running" as const,
-                },
+                { tool: evt.tool as string, label, status: "running" as const },
               ],
             };
+          }
 
-          case "tool_done":
-            return {
-              ...m,
-              toolEvents: (m.toolEvents ?? []).map((te) =>
-                te.tool === evt.tool ? { ...te, status: "done" as const } : te
-              ),
-            };
+          case "tool_done": {
+            const updated = (m.toolEvents ?? []).map((te) =>
+              te.tool === evt.tool ? { ...te, status: "done" as const } : te
+            );
+            const stillRunning = updated.find((te) => te.status === "running");
+            if (!stillRunning) setActiveStage(null);
+            return { ...m, toolEvents: updated };
+          }
 
           case "draft_ready":
             setDraftPayload(evt as unknown as DraftPayload);
             setShowDraft(true);
+            setActiveStage(null);
             return { ...m, hasDraft: true };
 
+          // Lightweight signal: report HTML saved to DB, will fetch after "done"
+          case "report_ready":
+            setActiveStage("Saving report…");
+            return m;
+
+          // Legacy fallback (backward compat — no longer sent by backend but handled if present)
           case "report_html":
-            setReportHtml(evt.html as string);
-            setShowReport(true);
-            setShowDraft(false); // dismiss draft panel when final report arrives
-            setReportUpdated(true);
-            setTimeout(() => setReportUpdated(false), 4000);
+            if (evt.html) {
+              setReportHtml(evt.html as string);
+              setShowReport(true);
+              setShowDraft(false);
+              setReportUpdated(true);
+              setTimeout(() => setReportUpdated(false), 4000);
+            }
+            setActiveStage(null);
             return { ...m, hasReport: true };
+
+          case "section_complete":
+            return m;
+
+          case "done":
+            // Always clear the streaming cursor and stage banner
+            setStreaming(false);
+            setActiveStage(null);
+            setShowDraft(false);
+            // If a report was generated this turn, fetch it from the API
+            // (avoids piping 100-300 KB of HTML through a single SSE frame)
+            if (evt.hasReport && currentConvId) {
+              fetch(`${API_BASE}/conversations/${currentConvId}/report`)
+                .then((r) => (r.ok ? r.text() : null))
+                .then((html) => {
+                  if (html && html.trim().startsWith("<!")) {
+                    setReportHtml(html);
+                    setShowReport(true);
+                    setShowDraft(false);
+                    setReportUpdated(true);
+                    setTimeout(() => setReportUpdated(false), 4000);
+                  }
+                })
+                .catch(() => {});
+            }
+            return { ...m, hasReport: !!(evt.hasReport) };
 
           case "cost":
             setSessionCost(prev => ({
@@ -518,19 +556,25 @@ export default function App() {
             <div style={styles.costWidgetBreakdown}>
               {sessionCost.claude > 0 && (
                 <div style={styles.costRow}>
-                  <span>Claude</span><span>${sessionCost.claude.toFixed(4)}</span>
+                  <span>Claude API</span><span>${sessionCost.claude.toFixed(4)}</span>
                 </div>
               )}
               {sessionCost.llm > 0 && (
                 <div style={styles.costRow}>
-                  <span>LLM APIs</span><span>${sessionCost.llm.toFixed(4)}</span>
+                  <span>LLM queries</span><span>${sessionCost.llm.toFixed(4)}</span>
                 </div>
               )}
               {sessionCost.serper > 0 && (
                 <div style={styles.costRow}>
-                  <span>Serper</span><span>${sessionCost.serper.toFixed(4)}</span>
+                  <span>Serper search</span><span>${sessionCost.serper.toFixed(4)}</span>
                 </div>
               )}
+            </div>
+            <div style={{ fontSize: 9, color: "#333333", marginTop: 6, lineHeight: 1.5 }}>
+              High cost? Each report fetches live data across<br />
+              social, media, search &amp; LLM APIs, then runs<br />
+              Claude Sonnet 4 to analyse all of it. Subsequent<br />
+              questions on the same data cost ~$0.02.
             </div>
           </div>
         )}
@@ -592,6 +636,44 @@ export default function App() {
             ))}
           <div ref={bottomRef} />
         </div>
+
+        {/* Generation stage banner */}
+        {loading && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 16px",
+            background: "rgba(255,255,255,0.025)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+          }} className="anim-fade-up">
+            <div style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: "#ffffff", flexShrink: 0,
+              animation: "pulse 1.2s ease-in-out infinite",
+            }} />
+            <span style={{ fontSize: 12, color: "#888888", fontWeight: 500, letterSpacing: "0.02em" }}>
+              {activeStage
+                ? activeStage
+                : streaming
+                ? "Writing…"
+                : "Thinking…"}
+            </span>
+            {activeStage && (
+              <div style={{
+                marginLeft: "auto", width: 80, height: 2,
+                background: "rgba(255,255,255,0.06)",
+                borderRadius: 2, overflow: "hidden", position: "relative",
+              }}>
+                <div style={{
+                  position: "absolute", inset: 0,
+                  background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)",
+                  backgroundSize: "200% 100%",
+                  animation: "shimmer 1.1s linear infinite",
+                }} />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Input bar */}
         <div style={styles.inputBar}>
