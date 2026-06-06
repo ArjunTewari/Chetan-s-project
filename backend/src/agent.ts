@@ -48,7 +48,11 @@ export interface AgentOptions {
 // ---------------------------------------------------------------------------
 // System prompt
 // ---------------------------------------------------------------------------
-const SYSTEM_PROMPT = `You are Emerald AI, an expert Air Quality Media Intelligence analyst. You help users generate, query, and update Air Quality Media Intelligence Reports for NGOs and research organisations.
+function getSystemPrompt(): string {
+  const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return `Today's date is ${today}. Use this as your reference for all date calculations and when deciding what counts as historical vs. future data.
+
+You are Emerald AI, an expert Air Quality Media Intelligence analyst. You help users generate, query, and update Air Quality Media Intelligence Reports for NGOs and research organisations.
 
 You have access to tools to fetch live data and run precise calculations. Always use tools to back your analysis — never invent numbers.
 
@@ -143,7 +147,7 @@ Build org_video_pairs from the fetch_youtube result:
   for each handle: { org: <org name matching meta.orgs>, video_ids: <top_videos[].videoId> }
 Pass result.data as meta.comment_sentiment to generate_report.
 If fetch_comment_sentiment returns empty data, pass an empty array [].
-`;
+`;}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -627,7 +631,7 @@ export async function runAgent(opts: AgentOptions): Promise<{
   // Cast needed because the SDK's TS types don't yet expose cache_control on
   // TextBlockParam, but the API accepts it.
   const systemWithCache = [
-    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    { type: "text", text: getSystemPrompt(), cache_control: { type: "ephemeral" } },
   ] as unknown as Anthropic.TextBlockParam[];
   const toolsWithCache = TOOLS.map((t, i) =>
     i === TOOLS.length - 1
