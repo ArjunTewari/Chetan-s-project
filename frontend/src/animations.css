@@ -77,6 +77,25 @@
   50%      { opacity: 0; }
 }
 
+@keyframes loginExit {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-72px) scale(0.95); }
+}
+
+@keyframes pinShake {
+  0%,100% { transform: translateX(0); }
+  18%     { transform: translateX(-9px); }
+  36%     { transform: translateX(9px); }
+  54%     { transform: translateX(-6px); }
+  72%     { transform: translateX(6px); }
+}
+
+@keyframes numBtnTap {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.91); }
+  100% { transform: scale(1); }
+}
+
 @keyframes staggerFadeUp {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -340,6 +359,31 @@
   background: rgba(255,255,255,0.1) !important;
   transform: translateY(-1px);
 }
+
+/* ── Login page ───────────────────────────────────────────────────────────── */
+
+.login-page-exit {
+  animation: loginExit 0.44s cubic-bezier(0.4, 0, 0.8, 0.2) forwards;
+  pointer-events: none;
+}
+
+.pin-shake {
+  animation: pinShake 0.38s ease both;
+}
+
+.num-btn {
+  transition: background 0.12s, transform 0.1s;
+}
+.num-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1) !important; }
+.num-btn:active:not(:disabled) { animation: numBtnTap 0.18s ease both; }
+
+.del-btn {
+  opacity: 0;
+  transition: opacity 0.15s, background 0.13s, transform 0.1s;
+}
+.conv-item-wrap:hover .del-btn { opacity: 1; }
+.del-btn:hover { background: rgba(255,255,255,0.1) !important; transform: scale(1.08); }
+.del-btn:active { transform: scale(0.92); }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
 

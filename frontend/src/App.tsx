@@ -92,6 +92,7 @@ export default function App() {
   const [sessionCost, setSessionCost] = useState({ claude: 0, llm: 0, serper: 0 });
   const [ytStatus, setYtStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
   const [convList, setConvList] = useState<ConvListItem[]>([]);
+  const [isAuthed, setIsAuthed] = useState(() => sessionStorage.getItem("emerald_authed") === "1");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -192,6 +193,23 @@ export default function App() {
       }
     } catch { /* ignore */ }
   }, [convId]);
+
+  // Delete a conversation
+  const deleteConversation = useCallback(async (id: number) => {
+    try {
+      await fetch(`${API_BASE}/conversations/${id}`, { method: "DELETE" });
+      if (id === convId) {
+        // Deleted the active conv — create a fresh one
+        const data = await fetch(`${API_BASE}/conversations`, { method: "POST" }).then((r) => r.json()) as { conversationId: number };
+        setConvId(data.conversationId);
+        setMessages([{ id: uid(), role: "system", content: "Welcome to **Emerald AI** — Air Quality Media Intelligence.\n\nTell me which organisations and date range you want to analyse, and I'll generate a full report. Or ask me anything about a report you've already generated." }]);
+        setReportHtml(null); setShowReport(false); setDraftPayload(null); setShowDraft(false);
+        setSessionCost({ claude: 0, llm: 0, serper: 0 }); setEditDraft("");
+        setWelcomeExiting(false); setWelcomeGone(false);
+      }
+      refreshConvList();
+    } catch { /* ignore */ }
+  }, [convId, refreshConvList]);
 
   // Start a new conversation
   const startNewConversation = useCallback(async () => {
@@ -399,6 +417,10 @@ export default function App() {
     }
   };
 
+  if (!isAuthed) {
+    return <LoginPage onSuccess={() => setIsAuthed(true)} />;
+  }
+
   return (
     <div style={styles.root}>
       {/* Top loading bar */}
@@ -473,53 +495,73 @@ export default function App() {
               const dateStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
               const hasOrgs = c.hasReport && c.orgs && c.orgs.length > 0;
               return (
-                <button
-                  key={c.id}
-                  style={{
-                    ...styles.convItem,
-                    background: isActive ? "rgba(255,255,255,0.06)" : "none",
-                    borderColor: isActive ? "rgba(255,255,255,0.12)" : "transparent",
-                  }}
-                  className="conv-item"
-                  onClick={() => loadConversation(c.id)}
-                >
-                  <div style={styles.convItemHeader}>
-                    {c.hasReport ? (
-                      <span style={{ fontSize: 11 }}>📊</span>
-                    ) : (
-                      <span style={{ fontSize: 10, color: isActive ? "#888888" : "#333333", fontWeight: 600 }}>
-                        #{c.id}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 10, color: "#484f58" }}>{dateStr}</span>
-                    {c.hasReport && (
-                      <span style={{ fontSize: 9, background: "rgba(255,255,255,0.06)", color: "#666666", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, padding: "1px 5px", marginLeft: "auto" }}>
-                        report
-                      </span>
-                    )}
-                  </div>
-                  {hasOrgs ? (
-                    <>
-                      <div style={{ ...styles.convItemTitle, color: isActive ? "#f0f0f0" : "#dddddd", fontWeight: 600, fontSize: 12, lineHeight: 1.3 }}>
-                        {(c.orgs ?? []).join(", ")}
-                      </div>
-                      {c.dateFrom && c.dateTo && (
-                        <div style={{ fontSize: 10, color: "#555555", marginTop: 3 }}>
-                          {c.dateFrom} – {c.dateTo}
-                        </div>
+                <div key={c.id} className="conv-item-wrap" style={{ position: "relative" }}>
+                  <button
+                    style={{
+                      ...styles.convItem,
+                      background: isActive ? "rgba(255,255,255,0.06)" : "none",
+                      borderColor: isActive ? "rgba(255,255,255,0.12)" : "transparent",
+                      paddingRight: 28,
+                    }}
+                    className="conv-item"
+                    onClick={() => loadConversation(c.id)}
+                  >
+                    <div style={styles.convItemHeader}>
+                      {c.hasReport ? (
+                        <span style={{ fontSize: 11 }}>📊</span>
+                      ) : (
+                        <span style={{ fontSize: 10, color: isActive ? "#888888" : "#333333", fontWeight: 600 }}>
+                          #{c.id}
+                        </span>
                       )}
-                    </>
-                  ) : (
-                    <div style={styles.convItemTitle}>
-                      {c.title.length > 52 ? c.title.slice(0, 52) + "…" : c.title}
+                      <span style={{ fontSize: 10, color: "#484f58" }}>{dateStr}</span>
+                      {c.hasReport && (
+                        <span style={{ fontSize: 9, background: "rgba(255,255,255,0.06)", color: "#666666", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, padding: "1px 5px", marginLeft: "auto" }}>
+                          report
+                        </span>
+                      )}
                     </div>
-                  )}
-                  {!c.hasReport && c.messageCount > 0 && (
-                    <div style={{ fontSize: 10, color: "#484f58", marginTop: 2 }}>
-                      {c.messageCount} message{c.messageCount !== 1 ? "s" : ""}
-                    </div>
-                  )}
-                </button>
+                    {hasOrgs ? (
+                      <>
+                        <div style={{ ...styles.convItemTitle, color: isActive ? "#f0f0f0" : "#dddddd", fontWeight: 600, fontSize: 12, lineHeight: 1.3 }}>
+                          {(c.orgs ?? []).join(", ")}
+                        </div>
+                        {c.dateFrom && c.dateTo && (
+                          <div style={{ fontSize: 10, color: "#555555", marginTop: 3 }}>
+                            {c.dateFrom} – {c.dateTo}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={styles.convItemTitle}>
+                        {c.title.length > 52 ? c.title.slice(0, 52) + "…" : c.title}
+                      </div>
+                    )}
+                    {!c.hasReport && c.messageCount > 0 && (
+                      <div style={{ fontSize: 10, color: "#484f58", marginTop: 2 }}>
+                        {c.messageCount} message{c.messageCount !== 1 ? "s" : ""}
+                      </div>
+                    )}
+                  </button>
+                  {/* Delete button — revealed on hover */}
+                  <button
+                    className="del-btn"
+                    title="Delete conversation"
+                    style={{
+                      position: "absolute", top: "50%", right: 6,
+                      transform: "translateY(-50%)",
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 5, color: "#555555",
+                      cursor: "pointer", width: 20, height: 20,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 12, lineHeight: 1, padding: 0,
+                    }}
+                    onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                  >
+                    ×
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -1140,6 +1182,134 @@ function MdText({ text }: { text: string }) {
     .replace(/\n/g, "<br/>");
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
+
+// ─── Login Page ──────────────────────────────────────────────────────────────
+function LoginPage({ onSuccess }: { onSuccess: () => void }) {
+  const [pin, setPin] = useState<string[]>([]);
+  const [exiting, setExiting] = useState(false);
+  const [shaking, setShaking] = useState(false);
+
+  const handleDigit = (d: string) => {
+    if (pin.length >= 4 || shaking || exiting) return;
+    const next = [...pin, d];
+    setPin(next);
+    if (next.length === 4) {
+      if (next.join("") === "1234") {
+        setExiting(true);
+        setTimeout(() => {
+          sessionStorage.setItem("emerald_authed", "1");
+          onSuccess();
+        }, 460);
+      } else {
+        setShaking(true);
+        setTimeout(() => { setPin([]); setShaking(false); }, 420);
+      }
+    }
+  };
+
+  const handleBack = () => {
+    if (!shaking && !exiting) setPin((p) => p.slice(0, -1));
+  };
+
+  // Also allow keyboard entry
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key >= "0" && e.key <= "9") handleDigit(e.key);
+      else if (e.key === "Backspace") handleBack();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const PAD = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
+
+  return (
+    <div className={exiting ? "login-page-exit" : "welcome-enter"} style={loginStyles.page}>
+      {/* Logo */}
+      <img
+        src="/emerald-logo.png"
+        alt="Emerald AI"
+        style={loginStyles.logo}
+        draggable={false}
+      />
+
+      {/* PIN dots */}
+      <div className={shaking ? "pin-shake" : ""} style={loginStyles.dotsRow}>
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            style={{
+              ...loginStyles.dot,
+              background: pin.length > i ? "#ffffff" : "transparent",
+              boxShadow: pin.length > i ? "0 0 8px rgba(255,255,255,0.4)" : "none",
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Number pad */}
+      <div style={loginStyles.numpad}>
+        {PAD.map((d, i) => (
+          <button
+            key={i}
+            className="num-btn"
+            disabled={d === "" || exiting}
+            style={{
+              ...loginStyles.numBtn,
+              ...(d === "" ? { background: "none", border: "none", cursor: "default", color: "transparent" } : {}),
+              ...(d === "⌫" ? { fontSize: 18, color: "#555555" } : {}),
+            }}
+            onClick={() => { if (d === "⌫") handleBack(); else if (d) handleDigit(d); }}
+          >
+            {d}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 11, color: "#2a2a2a", letterSpacing: "0.08em", marginTop: 8 }}>
+        {shaking ? "Incorrect PIN — try again" : "ENTER ACCESS PIN"}
+      </div>
+    </div>
+  );
+}
+
+const loginStyles: Record<string, React.CSSProperties> = {
+  page: {
+    position: "fixed", inset: 0,
+    background: "#080808",
+    display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center",
+    zIndex: 2000, gap: 36,
+  },
+  logo: {
+    width: 280, maxWidth: "70vw",
+    userSelect: "none",
+    opacity: 0.95,
+  },
+  dotsRow: {
+    display: "flex", gap: 18, alignItems: "center",
+  },
+  dot: {
+    width: 13, height: 13, borderRadius: "50%",
+    border: "2px solid rgba(255,255,255,0.2)",
+    transition: "background 0.15s, box-shadow 0.15s",
+  },
+  numpad: {
+    display: "grid", gridTemplateColumns: "repeat(3, 72px)",
+    gap: 10,
+  },
+  numBtn: {
+    width: 72, height: 72,
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    color: "#e0e0e0",
+    borderRadius: 18,
+    fontSize: 24, fontWeight: 300,
+    cursor: "pointer",
+    fontFamily: "'Inter', system-ui, sans-serif",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
+};
 
 // ─── Spinner ─────────────────────────────────────────────────────────────────
 function Spinner() {
