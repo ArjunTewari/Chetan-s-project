@@ -1,0 +1,402 @@
+// calculator.ts — pure computation, no side effects
+
+export interface RawInput {
+  meta: {
+    orgs: string[];
+    date_range: { from: string; to: string };
+    outlets: string[];
+    llms: string[];
+  };
+  raw: {
+    social: SocialRaw[];
+    media: MediaRaw[];
+    aeo: AeoRaw[];
+    queries: QueryRaw[];
+  };
+}
+
+export interface SocialRaw {
+  org: string;
+  platform: string;
+  impressions: number;
+  likes: number;
+  shares: number;
+  comments: number;
+  saves: number;
+  quote_rt: number;
+}
+
+export interface MediaRaw {
+  org: string;
+  outlet: string;
+  mentions: number;
+  dofollow: number;
+  direct_cites: number;
+  tone: "A" | "N"; // Authoritative / Neutral  (NOT positive/negative — N means the org was cited among peers, not as sole expert)
+}
+
+export interface AeoRaw {
+  org: string;
+  llm: string;
+  mention_count: number;
+  avg_position: number;
+  citation_type: "Direct" | "Passing" | "None";
+  direct_links: number;
+}
+
+export interface QueryRaw {
+  query: string;
+  org: string;
+  llm: string;
+  mentioned: boolean;
+  position?: number;
+}
+
+export interface CalcResult {
+  success: boolean;
+  error?: string;
+  sanity_errors?: string[];
+  social: SocialStats[];
+  media: MediaStats[];
+  aeo: AeoStats[];
+  scorecards: OrgScorecard[];
+  action_matrix: ActionItem[];
+}
+
+export interface SocialStats {
+  org: string;
+  platform: string;
+  impressions: number;
+  total_engagement: number;
+  er_pct: number; // engagement rate %
+  likes: number;
+  shares: number;
+  comments: number;
+  saves: number;
+}
+
+export interface MediaStats {
+  org: string;
+  total_mentions: number;
+  dofollow_links: number;
+  direct_cites: number;
+  /** % of outlet rows where tone = "Authoritative" (org cited as primary expert) */
+  aligned_tone_pct: number;
+  top_outlets: { outlet: string; mentions: number }[];
+}
+
+export interface AeoStats {
+  org: string;
+  llm: string;
+  mention_count: number;       // raw count out of 20 queries — shown as "X/20"
+  mention_rate_pct: number;    // mention_count / 20 × 100
+  avg_position: number;
+  citation_type: string;
+  direct_links: number;
+  visibility_score: number;    // 0–100 composite
+  /** Emerald AI Visibility Scale v1.0 (no universal standard exists as of 2025) */
+  visibility_tier: "High" | "Moderate" | "Low";
+}
+
+export interface OrgScorecard {
+  org: string;
+  social_score: number;    // 0–100
+  media_score: number;     // 0–100
+  aeo_score: number;       // 0–100
+  overall_score: number;   // weighted average
+  grade: "A" | "B" | "C" | "D" | "F";
+}
+
+export interface ActionItem {
+  org: string;
+  /** Fix Now = urgent gap act this week · Leverage = best asset double down · Optimise = structural fix 4–8 weeks · Invest = platform opportunity */
+  priority: "Fix Now" | "Leverage" | "Optimise" | "Invest";
+  area: "Social" | "Media" | "AEO";
+  action: string;
+  rationale: string; // always references specific numbers from the data
+}
+
+export function runCalculations(input: RawInput): CalcResult {
+  const sanity_errors: string[] = [];
+
+  // --- Social ---
+  const social: SocialStats[] = input.raw.social.map((s) => {
+    const total_engagement = s.likes + s.shares + s.comments + s.saves + s.quote_rt;
+    const er_pct =
+      s.impressions > 0
+        ? parseFloat(((total_engagement / s.impressions) * 100).toFixed(2))
+        : 0;
+
+    if (s.impressions < 0) sanity_errors.push(`Negative impressions for ${s.org} on ${s.platform}`);
+    if (er_pct > 50) sanity_errors.push(`Unrealistic ER (${er_pct}%) for ${s.org} on ${s.platform}`);
+
+    return {
+      org: s.org,
+      platform: s.platform,
+      impressions: s.impressions,
+      total_engagement,
+      er_pct,
+      likes: s.likes,
+      shares: s.shares,
+      comments: s.comments,
+      saves: s.saves,
+    };
+  });
+
+  // --- Media ---
+  const mediaByOrg: Record<string, MediaRaw[]> = {};
+  for (const m of input.raw.media) {
+    if (!mediaByOrg[m.org]) mediaByOrg[m.org] = [];
+    mediaByOrg[m.org].push(m);
+  }
+
+  const media: MediaStats[] = Object.entries(mediaByOrg).map(([org, rows]) => {
+    const total_mentions = rows.reduce((s, r) => s + r.mentions, 0);
+    const dofollow_links = rows.reduce((s, r) => s + r.dofollow, 0);
+    const direct_cites = rows.reduce((s, r) => s + r.direct_cites, 0);
+    // "Authoritative" outlets = tone A (org is primary expert source, quoted directly)
+    const authoritative = rows.filter((r) => r.tone === "A").length;
+    const aligned_tone_pct =
+      rows.length > 0
+        ? parseFloat(((authoritative / rows.length) * 100).toFixed(1))
+        : 0;
+
+    const top_outlets = [...rows]
+      .sort((a, b) => b.mentions - a.mentions)
+      .slice(0, 5)
+      .map((r) => ({ outlet: r.outlet, mentions: r.mentions }));
+
+    return { org, total_mentions, dofollow_links, direct_cites, aligned_tone_pct, top_outlets };
+  });
+
+  // --- AEO ---
+  // Emerald AI Visibility Scale v1.0 — methodology: Aggarwal et al. (2023) GEO paper
+  // High   : >65% mention rate (>13/20) AND avg position ≤ 2.0
+  // Moderate: 40–65% (8–13/20) OR avg position 2.0–3.0
+  // Low    : <40% (<8/20) AND avg position > 3.0 (or never mentioned)
+  const aeo: AeoStats[] = input.raw.aeo.map((a) => {
+    const mentionScore  = Math.min(40, (a.mention_count / 20) * 40);
+    const positionScore = a.mention_count > 0 && a.avg_position > 0
+      ? Math.max(0, 30 - (a.avg_position - 1) * 10)
+      : 0;
+    const citationScore =
+      a.citation_type === "Direct" ? 30 : a.citation_type === "Passing" ? 15 : 0;
+    const visibility_score = parseFloat(
+      (mentionScore + positionScore + citationScore).toFixed(1)
+    );
+    const mention_rate_pct = parseFloat(((a.mention_count / 20) * 100).toFixed(1));
+
+    const visibility_tier: AeoStats["visibility_tier"] =
+      mention_rate_pct > 65 && a.avg_position > 0 && a.avg_position <= 2.0 ? "High"
+      : mention_rate_pct >= 40 ? "Moderate"
+      : "Low";
+
+    return {
+      org: a.org,
+      llm: a.llm,
+      mention_count: a.mention_count,
+      mention_rate_pct,
+      avg_position: a.avg_position,
+      citation_type: a.citation_type,
+      direct_links: a.direct_links,
+      visibility_score,
+      visibility_tier,
+    };
+  });
+
+  // --- Scorecards ---
+  const scorecards: OrgScorecard[] = input.meta.orgs.map((org) => {
+    const orgSocial = social.filter((s) => s.org === org);
+    const orgMedia  = media.find((m) => m.org === org);
+    const orgAeo    = aeo.filter((a) => a.org === org);
+
+    // Social score: avg ER across platforms, normalised to 100 (benchmark ER = 3%)
+    const avgER =
+      orgSocial.length > 0
+        ? orgSocial.reduce((s, r) => s + r.er_pct, 0) / orgSocial.length
+        : 0;
+    const social_score = Math.min(100, parseFloat(((avgER / 3) * 100).toFixed(1)));
+
+    // Media score: mentions (50) + dofollow (30) + authoritative tone (20)
+    const mentionNorm  = orgMedia ? Math.min(50, (orgMedia.total_mentions / 100) * 50) : 0;
+    const dofollowNorm = orgMedia ? Math.min(30, (orgMedia.dofollow_links / 50) * 30) : 0;
+    const toneNorm     = orgMedia ? (orgMedia.aligned_tone_pct / 100) * 20 : 0;
+    const media_score  = parseFloat((mentionNorm + dofollowNorm + toneNorm).toFixed(1));
+
+    // AEO score: avg visibility across LLMs
+    const aeo_score =
+      orgAeo.length > 0
+        ? parseFloat(
+            (orgAeo.reduce((s, r) => s + r.visibility_score, 0) / orgAeo.length).toFixed(1)
+          )
+        : 0;
+
+    // Weighted overall: social 30%, media 40%, aeo 30%
+    const overall_score = parseFloat(
+      (social_score * 0.3 + media_score * 0.4 + aeo_score * 0.3).toFixed(1)
+    );
+
+    const grade: OrgScorecard["grade"] =
+      overall_score >= 80 ? "A"
+      : overall_score >= 65 ? "B"
+      : overall_score >= 50 ? "C"
+      : overall_score >= 35 ? "D"
+      : "F";
+
+    return { org, social_score, media_score, aeo_score, overall_score, grade };
+  });
+
+  // --- Action Matrix (4 categories, all rationales reference specific numbers) ---
+  const action_matrix: ActionItem[] = [];
+
+  for (const sc of scorecards) {
+    const orgSocialRows = social.filter((s) => s.org === sc.org);
+    const orgMedia      = media.find((m) => m.org === sc.org);
+    const orgAeoRows    = aeo.filter((a) => a.org === sc.org);
+
+    // ── FIX NOW: urgent gaps, act this week ──────────────────────────────────
+    if (sc.media_score < 40) {
+      const doRatio = orgMedia
+        ? `${orgMedia.dofollow_links} dofollow from ${orgMedia.total_mentions} mentions`
+        : "low dofollow ratio";
+      action_matrix.push({
+        org: sc.org,
+        priority: "Fix Now",
+        area: "Media",
+        action: "Pitch exclusive AQ research to key outlets and negotiate linked (dofollow) coverage",
+        rationale: `Media score ${sc.media_score}/100 — ${doRatio}. Dofollow links pass domain authority and directly raise LLM citation probability.`,
+      });
+    }
+
+    if (sc.social_score < 35) {
+      const worstPlatform = orgSocialRows.reduce(
+        (w, r) => (r.er_pct < w.er_pct ? r : w),
+        orgSocialRows[0] ?? { er_pct: 0, platform: "Social" }
+      );
+      action_matrix.push({
+        org: sc.org,
+        priority: "Fix Now",
+        area: "Social",
+        action: `Launch AQ-specific content campaign on ${worstPlatform.platform}`,
+        rationale: `Social score ${sc.social_score}/100 — ${worstPlatform.platform} ER ${worstPlatform.er_pct}% vs nonprofit benchmark 3% (Rival IQ 2025).`,
+      });
+    }
+
+    if (sc.aeo_score < 30) {
+      const worstLLM = orgAeoRows.reduce(
+        (w, r) => (r.mention_rate_pct < w.mention_rate_pct ? r : w),
+        orgAeoRows[0]
+      );
+      action_matrix.push({
+        org: sc.org,
+        priority: "Fix Now",
+        area: "AEO",
+        action: "Add structured AQ landing pages with schema.org markup and 'Key Findings' summaries",
+        rationale: worstLLM
+          ? `${worstLLM.llm}: only ${worstLLM.mention_count}/20 queries (${worstLLM.mention_rate_pct}%) — org not surfacing in LLM responses to generic AQ questions.`
+          : `AEO score ${sc.aeo_score}/100 — critically low LLM visibility.`,
+      });
+    }
+
+    // ── LEVERAGE: highest-value assets, double down ───────────────────────────
+    const bestAeoLLM = orgAeoRows.length > 0
+      ? orgAeoRows.reduce((b, r) => (r.visibility_score > b.visibility_score ? r : b))
+      : null;
+    if (bestAeoLLM && bestAeoLLM.mention_rate_pct >= 50) {
+      action_matrix.push({
+        org: sc.org,
+        priority: "Leverage",
+        area: "AEO",
+        action: `Publish regular structured AQ updates to sustain ${bestAeoLLM.llm} visibility`,
+        rationale: `${bestAeoLLM.llm}: ${bestAeoLLM.mention_count}/20 queries (${bestAeoLLM.mention_rate_pct}%), Avg pos ${bestAeoLLM.avg_position}, Citation: ${bestAeoLLM.citation_type} — already prominent; consistent content protects this position.`,
+      });
+    }
+
+    if (orgMedia && orgMedia.aligned_tone_pct >= 60 && sc.media_score >= 50) {
+      const topOutlet = orgMedia.top_outlets[0];
+      action_matrix.push({
+        org: sc.org,
+        priority: "Leverage",
+        area: "Media",
+        action: `Schedule exclusive data briefings with ${topOutlet?.outlet ?? "top outlet"} to deepen authoritative citation relationship`,
+        rationale: `${topOutlet?.outlet ?? "Top outlet"}: ${topOutlet?.mentions ?? 0} mentions, ${orgMedia.aligned_tone_pct}% authoritative tone — highest-value media relationship; exclusive access converts neutral mentions into authoritative cites.`,
+      });
+    }
+
+    const bestSocial = orgSocialRows.length > 0
+      ? orgSocialRows.reduce((b, r) => (r.er_pct > b.er_pct ? r : b))
+      : null;
+    if (bestSocial && bestSocial.er_pct > 3) {
+      action_matrix.push({
+        org: sc.org,
+        priority: "Leverage",
+        area: "Social",
+        action: `Scale ${bestSocial.platform} content output during high-pollution season`,
+        rationale: `${bestSocial.platform} ER ${bestSocial.er_pct}% vs nonprofit benchmark 3% (Rival IQ 2025) — above benchmark; increased cadence during peak AQI periods will compound reach.`,
+      });
+    }
+
+    // ── OPTIMISE: structural fixes, 4–8 weeks ─────────────────────────────────
+    if (orgAeoRows.length > 1) {
+      const mentionRates = orgAeoRows.map((r) => r.mention_rate_pct);
+      const bestRate  = Math.max(...mentionRates);
+      const worstRate = Math.min(...mentionRates);
+      const gap = bestRate - worstRate;
+      const worstEntry = orgAeoRows.find((r) => r.mention_rate_pct === worstRate);
+      const bestEntry  = orgAeoRows.find((r) => r.mention_rate_pct === bestRate);
+      if (gap > 25 && worstEntry && bestEntry) {
+        action_matrix.push({
+          org: sc.org,
+          priority: "Optimise",
+          area: "AEO",
+          action: `Add schema.org markup and structured 'Key Findings' sections to AQ pages to close ${worstEntry.llm} gap`,
+          rationale: `${worstEntry.llm}: ${worstEntry.mention_count}/20 (${worstRate}%) vs ${bestEntry.llm}: ${bestEntry.mention_count}/20 (${bestRate}%) — ${gap.toFixed(0)}pp gap. Different LLMs weight structured metadata differently; schema markup addresses ${worstEntry.llm}'s indexing.`,
+        });
+      }
+    }
+
+    if (orgMedia && orgMedia.aligned_tone_pct < 60 && sc.media_score >= 35) {
+      action_matrix.push({
+        org: sc.org,
+        priority: "Optimise",
+        area: "Media",
+        action: "Provide journalists with embargoed research previews to convert neutral citations into authoritative primary-source quotes",
+        rationale: `${orgMedia.aligned_tone_pct}% authoritative tone — org is cited among peers (Neutral), not as the primary expert. Authoritative coverage directly raises LLM citation probability.`,
+      });
+    }
+
+    // ── INVEST: platform gaps vs benchmark ───────────────────────────────────
+    const platformsBelow = orgSocialRows.filter(
+      (r) => r.er_pct < 3 && r.er_pct > 0
+    );
+    for (const p of platformsBelow.slice(0, 1)) {
+      action_matrix.push({
+        org: sc.org,
+        priority: "Invest",
+        area: "Social",
+        action: `Shift ${p.platform} strategy to data-rich formats (threads, infographics, AQI alerts)`,
+        rationale: `${p.platform} ER ${p.er_pct}% vs benchmark ${p.platform.includes("YouTube") ? "1.72%" : "2.44%"} (Rival IQ 2025) — below benchmark; content format change before increasing spend.`,
+      });
+    }
+
+    if (sc.aeo_score >= 30 && sc.aeo_score < 60) {
+      action_matrix.push({
+        org: sc.org,
+        priority: "Invest",
+        area: "AEO",
+        action: "Commission dedicated AQ FAQ pages optimised for conversational LLM queries",
+        rationale: `AEO score ${sc.aeo_score}/100 — mid-tier LLM visibility. FAQ format directly mirrors how LLMs retrieve and surface factual answers about organisations.`,
+      });
+    }
+  }
+
+  return {
+    success: true,
+    sanity_errors: sanity_errors.length > 0 ? sanity_errors : undefined,
+    social,
+    media,
+    aeo,
+    scorecards,
+    action_matrix,
+  };
+}

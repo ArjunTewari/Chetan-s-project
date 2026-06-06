@@ -1,0 +1,27 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+build/
+*.js.map
+
+# ── Secrets — NEVER commit real keys ──────────────────────────────────────────
+.env
+backend/.env
+# Keep the example template
+!.env.example
+!backend/.env.example
+
+# ── OAuth tokens ──────────────────────────────────────────────────────────────
+youtube-tokens.json
+backend/youtube-tokens.json
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
