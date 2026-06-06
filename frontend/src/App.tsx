@@ -185,7 +185,8 @@ export default function App() {
           if (data.messages.some((m) => m.role === "user")) setWelcomeGone(true);
           if (data.hasReport) {
             const html = await fetch(`${API_BASE}/conversations/${recent.id}/report`).then((r) => r.text()).catch(() => null);
-            if (html) { setReportHtml(html); setShowReport(true); }
+            if (html) { setReportHtml(html); }
+            // Note: do NOT auto-open report on chat click
           }
         }
       } catch { setConvId(1); }
@@ -226,7 +227,6 @@ export default function App() {
         const html = await fetch(`${API_BASE}/conversations/${id}/report`).then((r) => r.text()).catch(() => null);
         if (html) {
           setReportHtml(html);
-          setShowReport(true);
         }
       }
     } catch { /* ignore */ }
@@ -1695,7 +1695,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   reportFrame: {
-    flex: 1,
+    width: "100%",
+    height: "100%",
     border: "none",
     minWidth: 0,
   },

@@ -437,6 +437,7 @@ interface ToolResultStore {
   calcResult?: ReturnType<typeof runCalculations>;
   meta?: ReportMeta;
   htmlReport?: string;
+  reportSummary?: string;
   claudeCostUsd?: number; // accumulated before generate_report is called
   llmCostUsd?: number; // accumulated from fetch_llm_visibility
   serperCostUsd?: number; // accumulated from fetch_serper
@@ -517,6 +518,7 @@ async function executeTool(
           store.statsJson  = draftStatsJson;
         } catch { /* keep existing */ }
         store.meta = draftMeta;
+        store.reportSummary = summary;
         // Emit draft_ready event — frontend renders the review panel
         sendEvent(res, {
           type: "draft_ready",
@@ -633,6 +635,7 @@ export async function runAgent(opts: AgentOptions): Promise<{
   statsJson?: string;
   htmlReport?: string;
   meta?: ReportMeta;
+  reportSummary?: string;
   toolCallsJson?: string;
 }> {
   const { conversationId, userMessage, history, res } = opts;
@@ -795,6 +798,7 @@ export async function runAgent(opts: AgentOptions): Promise<{
     statsJson: store.statsJson,
     htmlReport: store.htmlReport,
     meta: store.meta,
+    reportSummary: store.reportSummary,
     toolCallsJson:
       toolCallsRecord.length > 0 ? JSON.stringify(toolCallsRecord) : undefined,
   };

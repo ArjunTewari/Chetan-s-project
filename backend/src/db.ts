@@ -27,6 +27,7 @@ export async function initSchema(): Promise<void> {
       html_report TEXT,
       stats_json TEXT,
       report_meta JSONB,
+      report_summary TEXT,
       orgs TEXT[],
       date_from TEXT,
       date_to TEXT,

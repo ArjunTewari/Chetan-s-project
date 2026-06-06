@@ -43,17 +43,19 @@ async function getConversationReport(convId: number): Promise<{
   htmlReport: string | null;
   statsJson: string | null;
   reportMeta: ReportMeta | null;
+  reportSummary: string | null;
 } | null> {
   const result = await pool.query(
-    "SELECT html_report, stats_json, report_meta FROM reports WHERE conversation_id = $1",
+    "SELECT html_report, stats_json, report_meta, report_summary FROM reports WHERE conversation_id = $1",
     [convId]
   );
-  if (result.rows.length === 0) return { htmlReport: null, statsJson: null, reportMeta: null };
+  if (result.rows.length === 0) return { htmlReport: null, statsJson: null, reportMeta: null, reportSummary: null };
   const row = result.rows[0];
   return {
     htmlReport: row.html_report ?? null,
     statsJson: row.stats_json ?? null,
     reportMeta: row.report_meta ?? null,
+    reportSummary: row.report_summary ?? null,
   };
 }
 
@@ -61,24 +63,26 @@ async function upsertReport(
   convId: number,
   htmlReport: string | null,
   statsJson: string | null,
-  reportMeta: ReportMeta | null
+  reportMeta: ReportMeta | null,
+  reportSummary: string | null
 ): Promise<void> {
   const orgs: string[] = reportMeta?.orgs ?? [];
   const dateFrom: string = (reportMeta?.date_range as { from?: string } | undefined)?.from ?? "";
   const dateTo: string = (reportMeta?.date_range as { to?: string } | undefined)?.to ?? "";
 
   await pool.query(
-    `INSERT INTO reports (conversation_id, html_report, stats_json, report_meta, orgs, date_from, date_to, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+    `INSERT INTO reports (conversation_id, html_report, stats_json, report_meta, report_summary, orgs, date_from, date_to, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
      ON CONFLICT (conversation_id) DO UPDATE SET
-       html_report  = EXCLUDED.html_report,
-       stats_json   = EXCLUDED.stats_json,
-       report_meta  = EXCLUDED.report_meta,
-       orgs         = EXCLUDED.orgs,
-       date_from    = EXCLUDED.date_from,
-       date_to      = EXCLUDED.date_to,
-       updated_at   = NOW()`,
-    [convId, htmlReport, statsJson, reportMeta ? JSON.stringify(reportMeta) : null, orgs, dateFrom, dateTo]
+       html_report      = EXCLUDED.html_report,
+       stats_json       = EXCLUDED.stats_json,
+       report_meta      = EXCLUDED.report_meta,
+       report_summary   = EXCLUDED.report_summary,
+       orgs             = EXCLUDED.orgs,
+       date_from        = EXCLUDED.date_from,
+       date_to          = EXCLUDED.date_to,
+       updated_at       = NOW()`,
+    [convId, htmlReport, statsJson, reportMeta ? JSON.stringify(reportMeta) : null, reportSummary, orgs, dateFrom, dateTo]
   );
 }
 
@@ -263,7 +267,8 @@ app.post("/conversations/:id/chat", async (req, res) => {
         id,
         result.htmlReport ?? reportData?.htmlReport ?? null,
         result.statsJson ?? reportData?.statsJson ?? null,
-        result.meta ?? reportData?.reportMeta ?? null
+        result.meta ?? reportData?.reportMeta ?? null,
+        result.reportSummary ?? reportData?.reportSummary ?? null
       );
     }
 
