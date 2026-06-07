@@ -589,6 +589,12 @@ export async function runAgent({
       }
       case "run_calculation": {
         const raw = (input as any).raw_input as RawInput;
+        if (!raw || !raw.raw) {
+          return {
+            success: false,
+            error: "run_calculation requires raw_input with raw.social, raw.media, and raw.aeo fields. Please call the data-fetch tools first and pass their results into raw_input.",
+          };
+        }
         const result = runCalculations(raw);
         store.statsJson = JSON.stringify(result);
         return { stats: result };

@@ -123,6 +123,20 @@ export interface ActionItem {
 export function runCalculations(input: RawInput): CalcResult {
   const sanity_errors: string[] = [];
 
+  // Defensive: if input is malformed, return an error result instead of crashing
+  if (!input || !input.raw || !input.raw.social || !input.raw.media || !input.raw.aeo) {
+    return {
+      success: false,
+      error: "Missing required raw data fields (social, media, or aeo). Ensure all data-fetch tools completed before calling run_calculation.",
+      sanity_errors: ["run_calculation called with incomplete input"],
+      social: [],
+      media: [],
+      aeo: [],
+      scorecards: [],
+      action_matrix: [],
+    };
+  }
+
   // --- Social ---
   const social: SocialStats[] = input.raw.social.map((s) => {
     const total_engagement = s.likes + s.shares + s.comments + s.saves + s.quote_rt;
