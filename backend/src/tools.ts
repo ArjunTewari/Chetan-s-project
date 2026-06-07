@@ -316,7 +316,7 @@ function fetchSerperStub(input: FetchSerperInput) {
       };
     }
   }
-  return { stub: true, data: results, date_range: input.date_range, serper_requests: 0 };
+  return { stub: true, data: results, date_range: input.date_range, serper_requests: 0, tone_evidence: [] as { org: string; outlet: string; tone: "A" | "N"; article_title: string; article_link: string; article_date: string }[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -1408,5 +1408,5 @@ function fetchLLMVisibilityStub(input: FetchLLMVisibilityInput) {
       });
     }
   }
-  return { stub: true, data, costs: [] as LLMApiCost[] };
+  return { stub: true, data, costs: [] as LLMApiCost[], query_results: [] as { query: string; org: string; llm: string; mentioned: boolean; position?: number }[] };
 }
