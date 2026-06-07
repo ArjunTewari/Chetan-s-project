@@ -63,4 +63,4 @@ externalPort = 80
 [deployment]
 deploymentTarget = "autoscale"
 run = ["bash", "-c", "cd backend && node dist/server.js"]
-build = ["bash", "-c", "cd frontend && npm run build"]
+build = ["bash", "-c", "cd backend && npm install && npm run build && cd ../frontend && npm install && npm run build"]
