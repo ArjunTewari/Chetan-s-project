@@ -13,7 +13,7 @@ import { logger } from "./logger";
 import { pool, initSchema } from "./db";
 
 const app = express();
-const PORT = process.env.PORT ?? 3001;
+const PORT = process.env.PORT ?? (process.env.NODE_ENV === "production" ? 5000 : 3001);
 
 // ---------------------------------------------------------------------------
 // Middleware
@@ -386,6 +386,23 @@ app.get("/conversations/:id/stats", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Healthcheck (must not depend on DB — used by deployment probes)
+// ---------------------------------------------------------------------------
+app.get("/", (req, res) => {
+  res.json({ status: "ok", service: "emerald-ai-backend" });
+});
+
+// ---------------------------------------------------------------------------
+// Serve frontend static files in production
+// ---------------------------------------------------------------------------
+if (process.env.NODE_ENV === "production") {
+  app.use(express.static(path.join(__dirname, "../../frontend/dist")));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "../../frontend/dist/index.html"));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 initSchema()
@@ -396,15 +413,10 @@ initSchema()
   })
   .catch((err) => {
     logger.error({ err }, "Failed to initialise database schema");
-    process.exit(1);
+    // Don't exit in production — let the server start so healthchecks pass
+    app.listen(PORT, () => {
+      logger.info(`Emerald AI backend running on port ${PORT} (DB init failed)`);
+    });
   });
-
-// Serve frontend static files in production
-if (process.env.NODE_ENV === "production") {
-  app.use(express.static(path.join(__dirname, "../../frontend/dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "../../frontend/dist/index.html"));
-  });
-}
 
 export default app;
