@@ -1,8 +1,8 @@
 // youtubeOAuth.ts — OAuth2 token manager for YouTube Data/Analytics API
-import { config } from "dotenv";
-import path from "path";
+// Replit secrets are injected as process.env — do NOT load dotenv with override
+// because that would wipe the Replit secrets.
 import fs from "fs";
-config({ path: path.resolve(__dirname, "../.env"), override: true });
+import path from "path";
 import { logger } from "./logger";
 
 const CLIENT_ID     = process.env.YOUTUBE_CLIENT_ID     ?? "";

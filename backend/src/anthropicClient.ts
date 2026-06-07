@@ -1,6 +1,6 @@
 import { config } from "dotenv";
 import path from "path";
-config({ path: path.resolve(__dirname, "../.env"), override: true });
+config({ path: path.resolve(__dirname, "../.env") });
 import Anthropic from "@anthropic-ai/sdk";
 
 export const MODEL = "claude-sonnet-4-20250514";

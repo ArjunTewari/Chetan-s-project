@@ -45,23 +45,28 @@ export interface AgentOptions {
   /** Persisted meta from the last full report generation — used in update_report_section
    *  so that rich data (youtube_channels, tone_evidence, etc.) is never lost on edits */
   reportMeta?: ReportMeta | null;
+  /** Summary of the last generated report — injected into the system prompt for QUERY intent */
+  reportSummary?: string | null;
 }
 
 // ---------------------------------------------------------------------------
 // System prompt
 // ---------------------------------------------------------------------------
-function getSystemPrompt(): string {
+function getSystemPrompt(reportSummary?: string | null): string {
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const summaryBlock = reportSummary
+    ? `\n## Stored report summary (for answering queries about this report)\n${reportSummary}\n`
+    : "";
   return `Today's date is ${today}. Use this as your reference for all date calculations and when deciding what counts as historical vs. future data.
 
 You are Emerald AI, an expert Air Quality Media Intelligence analyst. You help users generate, query, and update Air Quality Media Intelligence Reports for NGOs and research organisations.
 
 You have access to tools to fetch live data and run precise calculations. Always use tools to back your analysis — never invent numbers.
-
+${summaryBlock}
 ## Intent routing
 Classify the user's message as one of:
 - GENERATE: They want a new full report. If orgs / outlets / date range / LLMs are missing, ask for them, then follow the GENERATE workflow below.
-- QUERY: They have a question about an existing report. Answer from stats JSON / insights you have been given.
+- QUERY: They have a question about an existing report. Answer from the Stored report summary above. Do NOT use tools for queries unless the user explicitly asks for updated data.
 - ADD_STAT: They want to add/update a specific data point. Re-run run_calculation with updated data, then update_report_section.
 - APPROVE: They are approving the draft (e.g. "looks good", "generate the report", "approve"). Call generate_report using stored stats + meta.
 - HELP: Explain what you can do.
@@ -710,7 +715,7 @@ export async function runAgent(opts: AgentOptions): Promise<{
   // Cast needed because the SDK's TS types don't yet expose cache_control on
   // TextBlockParam, but the API accepts it.
   const systemWithCache = [
-    { type: "text", text: getSystemPrompt(), cache_control: { type: "ephemeral" } },
+    { type: "text", text: getSystemPrompt(opts.reportSummary), cache_control: { type: "ephemeral" } },
   ] as unknown as Anthropic.TextBlockParam[];
   const toolsWithCache = TOOLS.map((t, i) =>
     i === TOOLS.length - 1

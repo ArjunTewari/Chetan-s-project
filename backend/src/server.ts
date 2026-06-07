@@ -1,7 +1,7 @@
 // server.ts — Express HTTP + SSE server (PostgreSQL-backed)
 import { config } from "dotenv";
 import path from "path";
-config({ path: path.resolve(__dirname, "../.env"), override: true });
+config({ path: path.resolve(__dirname, "../.env") });
 import express from "express";
 import cors from "cors";
 import { runAgent, sendEvent, type ConversationMessage } from "./agent";
@@ -249,6 +249,7 @@ app.post("/conversations/:id/chat", async (req, res) => {
       res,
       reportStatsJson: reportData?.statsJson ?? null,
       reportMeta: reportData?.reportMeta ?? null,
+      reportSummary: reportData?.reportSummary ?? null,
     });
 
     // Persist user + assistant messages
