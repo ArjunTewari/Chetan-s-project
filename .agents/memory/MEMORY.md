@@ -1,3 +1,1 @@
-- [Replit API routing](replit-api-routing.md) — API_BASE must be "" (empty string); absolute localhost URLs fail in Replit's browser proxy.
-- [htmlGenerator null safety](htmlgenerator-null-safety.md) — All .toLocaleString()/.toFixed() calls on api_costs/social/YouTube fields need ?? 0 guards or they crash report generation silently.
-- [SSE report delivery](sse-report-delivery.md) — Never pipe full HTML (100-300KB) through a single SSE frame; send a lightweight signal then fetch from API after done event.
+- [run_calculation context overflow fix](run-calc-overflow.md) — with 9-13 orgs the LLM sends empty `{}` to run_calculation; server-side accumulation in `store.accumulated` is the fix.

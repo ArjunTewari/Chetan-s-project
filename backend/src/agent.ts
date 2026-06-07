@@ -124,7 +124,7 @@ Violating this rule means the user cannot view, download, or interact with the r
 - NEVER call generate_report immediately after run_calculation. Always go through present_draft first.
 - After all data-fetch tools complete, your immediate next call MUST be run_calculation — no text response in between.
 - After run_calculation, your immediate next call MUST be present_draft — no text response in between.
-- Call BOTH fetch_youtube AND fetch_x_api for social data.
+- Call BOTH fetch_youtube AND fetch_x_api for social data. Always pass the "orgs" array (matching handles order) to both — this is required for correct org mapping.
 - Call fetch_instagram with org Instagram handles (e.g. @ceew_india) and query_keywords matching the topic. If the handle is unknown, use the org name as the handle — the fetcher will search by org name. source='not_found' means the org has no indexed Instagram presence; mark the row as "handle not confirmed" in the report.
 - Call fetch_linkedin with org LinkedIn company slugs or names and query_keywords. source='not_found' means no indexed LinkedIn presence; mark as "handle not confirmed".
 - fetch_instagram returns: { data: { [handle]: { platform, impressions, likes, comments, saves, indexed_posts, source } } }
@@ -212,14 +212,15 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object" as const,
       properties: {
-        handles: { type: "array", items: { type: "string" } },
+        handles: { type: "array", items: { type: "string" }, description: "YouTube handles e.g. ['@WRIIndiaChannel']" },
+        orgs:    { type: "array", items: { type: "string" }, description: "Org names matching handles order, e.g. ['WRI India']. REQUIRED — must always be provided." },
         date_range: {
           type: "object",
           properties: { from: { type: "string" }, to: { type: "string" } },
           required: ["from", "to"],
         },
       },
-      required: ["handles", "date_range"],
+      required: ["handles", "orgs", "date_range"],
     },
   },
   {
@@ -229,14 +230,15 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object" as const,
       properties: {
-        handles: { type: "array", items: { type: "string" } },
+        handles: { type: "array", items: { type: "string" }, description: "X handles e.g. ['@WRIIndia']" },
+        orgs:    { type: "array", items: { type: "string" }, description: "Org names matching handles order, e.g. ['WRI India']. REQUIRED — must always be provided." },
         date_range: {
           type: "object",
           properties: { from: { type: "string" }, to: { type: "string" } },
           required: ["from", "to"],
         },
       },
-      required: ["handles", "date_range"],
+      required: ["handles", "orgs", "date_range"],
     },
   },
   {
@@ -478,6 +480,21 @@ const TOOLS: Anthropic.Tool[] = [
 // ---------------------------------------------------------------------------
 // Internal state
 // ---------------------------------------------------------------------------
+interface AccumulatedFetchData {
+  serperInput?: { orgs: string[]; outlets: string[]; date_range: { from: string; to: string } };
+  serperData?: Record<string, Record<string, { mentions: number; dofollow: number; direct_cites: number; tone: string }>>;
+  youtubeInput?: { handles: string[]; orgs?: string[] };
+  youtubeData?: Record<string, any>;
+  xInput?: { handles: string[]; orgs?: string[] };
+  xData?: Record<string, any>;
+  instagramInput?: { handles: string[]; orgs?: string[] };
+  instagramData?: Record<string, any>;
+  linkedinInput?: { handles: string[]; orgs?: string[] };
+  linkedinData?: Record<string, any>;
+  aeoData?: any[];
+  aeoLlms?: string[];
+}
+
 interface AgentState {
   reportSummary?: string;
   meta: ReportMeta;
@@ -485,6 +502,87 @@ interface AgentState {
   htmlReport: string;
   toolCalls: Record<string, number>;
   toolCallsRecord: { tool: string; input: Record<string, unknown>; output: Record<string, unknown> }[];
+  accumulated: AccumulatedFetchData;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-build raw_input from server-side accumulated fetch data
+// Used when the LLM calls run_calculation with empty/missing raw_input
+// (context overflow with many orgs causes the LLM to omit the large payload)
+// ---------------------------------------------------------------------------
+function buildAutoRawInput(acc: AccumulatedFetchData): RawInput | null {
+  if (!acc.serperInput) return null;
+
+  const social: RawInput["raw"]["social"] = [];
+
+  // YouTube
+  if (acc.youtubeData && acc.youtubeInput) {
+    const handles = acc.youtubeInput.handles ?? [];
+    const orgs = acc.youtubeInput.orgs ?? acc.serperInput.orgs ?? [];
+    for (const [handle, d] of Object.entries(acc.youtubeData) as [string, any][]) {
+      const idx = handles.findIndex(h => h.toLowerCase() === handle.toLowerCase());
+      const org = (idx >= 0 && orgs[idx]) ? orgs[idx] : (d.channel_title ?? handle);
+      if (d.longform && d.shorts && (d.longform.impressions > 0 || d.shorts.impressions > 0)) {
+        social.push({ org, platform: "YouTube Long-form", impressions: d.longform.impressions ?? 0, likes: d.longform.likes ?? 0, shares: 0, comments: d.longform.comments ?? 0, saves: d.longform.saves ?? 0, quote_rt: 0 });
+        social.push({ org, platform: "YouTube Shorts",    impressions: d.shorts.impressions ?? 0,   likes: d.shorts.likes ?? 0,   shares: 0, comments: d.shorts.comments ?? 0,   saves: d.shorts.saves ?? 0,   quote_rt: 0 });
+      } else {
+        social.push({ org, platform: "YouTube", impressions: d.impressions ?? 0, likes: d.likes ?? 0, shares: d.shares ?? 0, comments: d.comments ?? 0, saves: d.saves ?? 0, quote_rt: 0 });
+      }
+    }
+  }
+
+  // X
+  if (acc.xData && acc.xInput) {
+    const handles = acc.xInput.handles ?? [];
+    const orgs = acc.xInput.orgs ?? acc.serperInput.orgs ?? [];
+    for (const [handle, d] of Object.entries(acc.xData) as [string, any][]) {
+      const idx = handles.findIndex(h => h.toLowerCase() === handle.toLowerCase());
+      const org = (idx >= 0 && orgs[idx]) ? orgs[idx] : handle;
+      social.push({ org, platform: "X", impressions: d.impressions ?? 0, likes: d.likes ?? 0, shares: d.shares ?? 0, comments: d.comments ?? 0, saves: d.saves ?? 0, quote_rt: d.quote_rt ?? 0 });
+    }
+  }
+
+  // Instagram
+  if (acc.instagramData && acc.instagramInput) {
+    const handles = acc.instagramInput.handles ?? [];
+    const orgs = acc.instagramInput.orgs ?? acc.serperInput.orgs ?? [];
+    for (const [handle, d] of Object.entries(acc.instagramData) as [string, any][]) {
+      const idx = handles.findIndex(h => h.toLowerCase() === handle.toLowerCase());
+      const org = (idx >= 0 && orgs[idx]) ? orgs[idx] : handle;
+      social.push({ org, platform: "Instagram", impressions: d.impressions ?? 0, likes: d.likes ?? 0, shares: 0, comments: d.comments ?? 0, saves: d.saves ?? 0, quote_rt: 0 });
+    }
+  }
+
+  // LinkedIn
+  if (acc.linkedinData && acc.linkedinInput) {
+    const handles = acc.linkedinInput.handles ?? [];
+    const orgs = acc.linkedinInput.orgs ?? acc.serperInput.orgs ?? [];
+    for (const [handle, d] of Object.entries(acc.linkedinData) as [string, any][]) {
+      const idx = handles.findIndex(h => h.toLowerCase() === handle.toLowerCase());
+      const org = (idx >= 0 && orgs[idx]) ? orgs[idx] : handle;
+      social.push({ org, platform: "LinkedIn", impressions: d.impressions ?? 0, likes: d.likes ?? 0, shares: d.shares ?? 0, comments: d.comments ?? 0, saves: 0, quote_rt: 0 });
+    }
+  }
+
+  // Media from serper
+  const media: RawInput["raw"]["media"] = [];
+  if (acc.serperData) {
+    for (const [org, outletMap] of Object.entries(acc.serperData)) {
+      for (const [outlet, stats] of Object.entries(outletMap)) {
+        media.push({ org, outlet, mentions: stats.mentions, dofollow: stats.dofollow, direct_cites: stats.direct_cites, tone: stats.tone as "A" | "N" });
+      }
+    }
+  }
+
+  return {
+    meta: {
+      orgs: acc.serperInput.orgs,
+      date_range: acc.serperInput.date_range,
+      outlets: acc.serperInput.outlets,
+      llms: acc.aeoLlms ?? ["ChatGPT", "Perplexity", "Gemini"],
+    },
+    raw: { social, media, aeo: acc.aeoData ?? [], queries: [] },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +614,7 @@ export async function runAgent({
     htmlReport: "",
     toolCalls: {},
     toolCallsRecord: [],
+    accumulated: {},
   };
 
   // If reportMeta is provided but statsJson is empty, build an empty stats JSON
@@ -539,6 +638,13 @@ export async function runAgent({
     switch (name) {
       case "fetch_serper": {
         const result = await fetchSerper(input as any);
+        // Accumulate server-side for run_calculation fallback
+        store.accumulated.serperInput = {
+          orgs: (input as any).orgs ?? [],
+          outlets: (input as any).outlets ?? [],
+          date_range: (input as any).date_range ?? { from: "", to: "" },
+        };
+        store.accumulated.serperData = result.data as any;
         const returnObj: Record<string, unknown> = {
           stub: result.stub,
           data: result.data,
@@ -552,18 +658,26 @@ export async function runAgent({
       }
       case "fetch_youtube": {
         const result = await fetchYouTube(input as any);
+        store.accumulated.youtubeInput = { handles: (input as any).handles ?? [], orgs: (input as any).orgs };
+        store.accumulated.youtubeData = result.data as any;
         return { stub: result.stub, data: result.data };
       }
       case "fetch_x_api": {
         const result = await fetchXApi(input as any);
+        store.accumulated.xInput = { handles: (input as any).handles ?? [], orgs: (input as any).orgs };
+        store.accumulated.xData = result.data as any;
         return { stub: result.stub, data: result.data };
       }
       case "fetch_instagram": {
         const result = await fetchInstagram(input as any);
+        store.accumulated.instagramInput = { handles: (input as any).handles ?? [], orgs: (input as any).orgs };
+        store.accumulated.instagramData = result.data as any;
         return { stub: result.stub, data: result.data };
       }
       case "fetch_linkedin": {
         const result = await fetchLinkedIn(input as any);
+        store.accumulated.linkedinInput = { handles: (input as any).handles ?? [], orgs: (input as any).orgs };
+        store.accumulated.linkedinData = result.data as any;
         return { stub: result.stub, data: result.data };
       }
       case "fetch_semrush": {
@@ -572,6 +686,8 @@ export async function runAgent({
       }
       case "fetch_llm_visibility": {
         const result = await fetchLLMVisibility(input as any);
+        store.accumulated.aeoData = result.data as any;
+        store.accumulated.aeoLlms = (input as any).llms ?? ["ChatGPT", "Perplexity", "Gemini"];
         return {
           stub: result.stub,
           data: result.data,
@@ -588,12 +704,20 @@ export async function runAgent({
         return { data: result.data };
       }
       case "run_calculation": {
-        const raw = (input as any).raw_input as RawInput;
+        let raw = (input as any).raw_input as RawInput;
+        // Fallback: if LLM sent empty input (context overflow with many orgs),
+        // auto-build raw_input from server-side accumulated fetch data
         if (!raw || !raw.raw) {
-          return {
-            success: false,
-            error: "run_calculation requires raw_input with raw.social, raw.media, and raw.aeo fields. Please call the data-fetch tools first and pass their results into raw_input.",
-          };
+          const autoRaw = buildAutoRawInput(store.accumulated);
+          if (autoRaw) {
+            logger.info({ orgs: autoRaw.meta.orgs, social: autoRaw.raw.social.length, media: autoRaw.raw.media.length, aeo: autoRaw.raw.aeo.length }, "run_calculation: auto-built raw_input from server-side accumulated data");
+            raw = autoRaw;
+          } else {
+            return {
+              success: false,
+              error: "No raw_input provided and no accumulated fetch data found. Please call fetch_serper, fetch_youtube, fetch_x_api, fetch_instagram, fetch_linkedin, and fetch_llm_visibility first.",
+            };
+          }
         }
         const result = runCalculations(raw);
         store.statsJson = JSON.stringify(result);
