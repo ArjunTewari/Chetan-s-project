@@ -418,12 +418,22 @@ async function findChannel(orgOrHandle: string, token: string): Promise<YTChanne
   };
 }
 
-/** Get top N videos from a channel sorted by viewCount */
-async function getTopVideos(channelId: string, maxResults: number, token: string): Promise<string[]> {
-  const data = await ytGet<{ items?: { id: { videoId: string } }[] }>(
-    `/search?part=id&channelId=${channelId}&type=video&order=viewCount&maxResults=${maxResults}`,
-    token
-  );
+/** Get top N videos from a channel sorted by viewCount, filtered by date range */
+async function getTopVideos(
+  channelId: string,
+  maxResults: number,
+  token: string,
+  dateRange?: { from: string; to: string }
+): Promise<string[]> {
+  let url = `/search?part=id&channelId=${channelId}&type=video&order=viewCount&maxResults=${maxResults}`;
+  if (dateRange) {
+    // YouTube API accepts ISO 8601 timestamps
+    const from = new Date(dateRange.from);
+    const to = new Date(dateRange.to);
+    to.setHours(23, 59, 59, 999);
+    url += `&publishedAfter=${from.toISOString()}&publishedBefore=${to.toISOString()}`;
+  }
+  const data = await ytGet<{ items?: { id: { videoId: string } }[] }>(url, token);
   return (data?.items ?? []).map((i) => i.id.videoId).filter(Boolean);
 }
 
@@ -509,7 +519,7 @@ export async function fetchYouTube(input: FetchYouTubeInput) {
       continue;
     }
 
-    const videoIds = await getTopVideos(channel.channelId, 10, token);
+    const videoIds = await getTopVideos(channel.channelId, 10, token, input.date_range);
     const videos   = await getVideoStats(videoIds, token);
 
     // Split into Long-form (>60s) and Shorts (≤60s)

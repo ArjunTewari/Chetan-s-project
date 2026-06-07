@@ -170,11 +170,52 @@ export function runCalculations(input: RawInput): CalcResult {
   });
 
   // --- AEO ---
+  // raw.aeo may contain EITHER per-query objects (query + mentioned + position)
+  // OR already-aggregated per-org×LLM objects (mention_count + avg_position + citation_type).
+  // We detect the format and aggregate per-query objects into per-org×LLM summaries.
+  //
   // Emerald AI Visibility Scale v1.0 — methodology: Aggarwal et al. (2023) GEO paper
   // High   : >65% mention rate (>13/20) AND avg position ≤ 2.0
   // Moderate: 40–65% (8–13/20) OR avg position 2.0–3.0
   // Low    : <40% (<8/20) AND avg position > 3.0 (or never mentioned)
-  const aeo: AeoStats[] = input.raw.aeo.map((a) => {
+  const isQueryFormat = (a: AeoRaw | QueryRaw) => "query" in a && "mentioned" in a;
+  const aeoRaw = input.raw.aeo;
+  const aggregatedAeoMap: Record<string, AeoRaw> = {};
+  for (const a of aeoRaw) {
+    if (isQueryFormat(a)) {
+      const key = `${a.org}|${a.llm}`;
+      const entry = (aggregatedAeoMap[key] ??= {
+        org: a.org,
+        llm: a.llm,
+        mention_count: 0,
+        avg_position: 0,
+        citation_type: "None" as "Direct" | "Passing" | "None",
+        direct_links: 0,
+      });
+      if (a.mentioned) {
+        entry.mention_count += 1;
+        if (a.position) {
+          // Keep a running average
+          const total = entry.mention_count;
+          entry.avg_position = parseFloat(
+            ((entry.avg_position * (total - 1) + a.position) / total).toFixed(1)
+          );
+        }
+        // If any query has a position (direct citation), upgrade from None
+        if (a.position && a.position > 0 && entry.citation_type === "None") {
+          entry.citation_type = "Direct";
+          entry.direct_links += 1;
+        } else if (a.mentioned && entry.citation_type === "None") {
+          entry.citation_type = "Passing";
+        }
+      }
+    } else {
+      const key = `${a.org}|${a.llm}`;
+      aggregatedAeoMap[key] = a as AeoRaw;
+    }
+  }
+
+  const aeo: AeoStats[] = Object.values(aggregatedAeoMap).map((a) => {
     const mentionScore  = Math.min(40, (a.mention_count / 20) * 40);
     const positionScore = a.mention_count > 0 && a.avg_position > 0
       ? Math.max(0, 30 - (a.avg_position - 1) * 10)

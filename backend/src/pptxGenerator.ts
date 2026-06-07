@@ -94,7 +94,7 @@ function buildCover(prs: PptxGenJS, meta: ReportMeta) {
   slide.addShape("rect", { x: 0, y: 0, w: 10, h: 0.1, fill: { color: C.emerald }, line: { color: C.emerald, pt: 0 } });
 
   // Logo label
-  slide.addText("EMERALD AI  ·  AIR QUALITY INTELLIGENCE  ·  BASELINE REPORT  ·  CONFIDENTIAL", {
+  slide.addText("Emerald AI  ·  AIR QUALITY INTELLIGENCE  ·  BASELINE REPORT  ·  CONFIDENTIAL", {
     x: 0.4, y: 0.22, w: 9.2, h: 0.28,
     fontSize: 8.5, bold: true, color: C.emerald, fontFace: FONT, charSpacing: 1.5,
   });

@@ -51,7 +51,20 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
 
   // YouTube channel cards + top-video tables
   const ytChannels = meta.youtube_channels ?? [];
-  const ytChannelCards = ytChannels.map(ch => `
+  const ytFrom = meta.date_range?.from ? new Date(meta.date_range.from).getTime() : 0;
+  const ytTo = meta.date_range?.to ? new Date(meta.date_range.to).getTime() : Infinity;
+  const ytChannelCards = ytChannels.map(ch => {
+    // Filter videos published within the report date range, with null-safe date parsing
+    const videosInPeriod = (ch.top_videos ?? []).filter((v) => {
+      if (!v.publishedAt) return false;
+      const ts = new Date(v.publishedAt).getTime();
+      return !isNaN(ts) && ts >= ytFrom && ts <= ytTo;
+    });
+    const videoCount = videosInPeriod.length;
+    const label = videoCount === 0
+      ? "No Videos Published in Period"
+      : `Videos Published in Period · Sorted by Views at Time of Report`;
+    return `
     <div class="yt-channel-card">
       <div class="yt-channel-header">
         <span class="yt-icon">▶</span>
@@ -65,21 +78,27 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
         <div class="yt-stat"><div class="yt-stat-label">Subscribers</div><div class="yt-stat-value">${(ch.channel_subscribers ?? 0).toLocaleString()}</div></div>
         <div class="yt-stat"><div class="yt-stat-label">Total Videos</div><div class="yt-stat-value">${(ch.channel_video_count ?? 0).toLocaleString()}</div></div>
       </div>
-      <div class="yt-top-title">Top 10 Videos by View Count</div>
+      <div class="yt-top-title">${label}</div>
+      ${videoCount === 0 ? '<p style="color:var(--text-muted);font-size:12px;margin:8px 0">No videos were published within the selected date range.</p>' : `
       <table>
         <thead><tr><th>#</th><th>Title</th><th>Published</th><th>Views</th><th>Likes</th><th>Comments</th></tr></thead>
-        <tbody>${ch.top_videos.map((v, i) => `
+        <tbody>${videosInPeriod.map((v, i) => {
+          const d = v.publishedAt ? new Date(v.publishedAt) : null;
+          const dateStr = d && !isNaN(d.getTime()) ? d.toLocaleDateString() : "—";
+          return `
           <tr>
             <td style="color:var(--text-muted)">${i + 1}</td>
             <td><a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="color:var(--emerald);text-decoration:none">${v.title}</a></td>
-            <td style="color:var(--text-muted)">${new Date(v.publishedAt).toLocaleDateString()}</td>
+            <td style="color:var(--text-muted)">${dateStr}</td>
             <td class="highlight">${(v.views ?? 0).toLocaleString()}</td>
             <td>${(v.likes ?? 0).toLocaleString()}</td>
             <td>${(v.comments ?? 0).toLocaleString()}</td>
-          </tr>`).join("")}
+          </tr>`;
+        }).join("")}
         </tbody>
-      </table>
-    </div>`).join("");
+      </table>`}
+    </div>`;
+  }).join("");
 
   // Comment Sentiment section
   const sentimentData = meta.comment_sentiment ?? [];
@@ -525,7 +544,7 @@ ${stats.sanity_errors?.length ? `<div class="section"><div class="sanity-box"><h
   </h2>
   <p class="section-desc">News mentions, dofollow links, direct citations, and journalist tone across tracked outlets. AQ content only.</p>
   <div class="metric-note">
-    <strong>Total Mentions</strong> — articles found via Serper News API (Google News index). Uses a 5-tier fallback: (1) site-specific search, (2) quoted org name, (3) topic-only search, (4) backup specialist outlets (Down To Earth, Wire, Carbon Brief, Mongabay, etc.), (5) broad web search. Outlet names marked with ★ were found through backup searches. &nbsp;
+    <strong>Total Mentions</strong> — articles found via Serper News API (Google News index). Uses a 5-tier fallback: (1) site-specific search, (2) quoted org name, (3) topic-only search, (4) backup specialist outlets (Down To Earth, The Wire, Mongabay India, Scroll, The Print, etc.), (5) broad web search. Outlet names marked with ★ were found through backup searches. &nbsp;
     <strong>Dofollow Links</strong> — estimated backlinks passing domain authority (60% of mentions for major outlets). &nbsp;
     <strong>Direct Cites</strong> — articles whose snippet or title explicitly names the organisation. &nbsp;
     <strong>Authoritative Tone %</strong> — % of outlet rows where tone = A (org is primary expert source, researcher quoted). <em>N = Neutral (not negative)</em> — org mentioned among peers. Authoritative coverage directly raises LLM citation probability.

@@ -7,7 +7,7 @@ import {
   calcCost,
 } from "./anthropicClient";
 import { runCalculations, type RawInput } from "./calculator";
-import { generateHTMLReport, type ReportMeta } from "./htmlGenerator";
+import { generateHTMLReport, type ReportMeta, type ToneEvidenceItem, type YouTubeChannelData } from "./htmlGenerator";
 import {
   fetchSerper,
   fetchYouTube,
@@ -16,6 +16,8 @@ import {
   fetchLLMVisibility,
   fetchCommentSentiment,
   fetchWikipedia,
+  type CommentSentimentResult,
+  type WikipediaInfo,
 } from "./tools";
 import { logger } from "./logger";
 
@@ -68,7 +70,7 @@ Classify the user's message as one of:
 ChatGPT, Perplexity, Gemini
 
 ## Default outlets (use if not specified)
-The Guardian, BBC, Reuters, AP News, Bloomberg
+Hindustan Times, The Times of India, The Hindu, NDTV, News18, India Today
 
 ## LLM visibility queries — MUST be generic discovery questions
 Queries passed to fetch_llm_visibility must be generic questions a user would naturally ask.
@@ -441,6 +443,12 @@ interface ToolResultStore {
   claudeCostUsd?: number; // accumulated before generate_report is called
   llmCostUsd?: number; // accumulated from fetch_llm_visibility
   serperCostUsd?: number; // accumulated from fetch_serper
+  // Rich data from tool results — injected into meta on generate_report
+  toneEvidence?: ToneEvidenceItem[];
+  commentSentiment?: CommentSentimentResult[];
+  llmQueryResults?: { query: string; org: string; llm: string; mentioned: boolean; position?: number }[];
+  wikiData?: Record<string, WikipediaInfo>;
+  youtubeChannels?: YouTubeChannelData[];
 }
 
 // ---------------------------------------------------------------------------
@@ -461,13 +469,35 @@ async function executeTool(
           store.serperCostUsd = (store.serperCostUsd ?? 0) + serperCost;
           sendEvent(res, { type: "serper_cost", costUsd: store.serperCostUsd });
         }
+        // Store tone evidence for later injection into meta
+        if (result.tone_evidence && Array.isArray(result.tone_evidence)) {
+          store.toneEvidence = result.tone_evidence as ToneEvidenceItem[];
+        }
         return JSON.stringify(result);
       }
 
-      case "fetch_youtube":
-        return JSON.stringify(
-          await fetchYouTube(toolInput as unknown as Parameters<typeof fetchYouTube>[0])
-        );
+      case "fetch_youtube": {
+        const result = await fetchYouTube(toolInput as unknown as Parameters<typeof fetchYouTube>[0]);
+        // Store YouTube channels for later injection into meta
+        if (result.stub === false && result.data) {
+          const channels: YouTubeChannelData[] = [];
+          for (const [handle, data] of Object.entries(result.data)) {
+            if (data.top_videos) {
+              channels.push({
+                handle,
+                channel_title: data.channel_title,
+                channel_id: data.channel_id,
+                channel_total_views: data.channel_total_views,
+                channel_subscribers: data.channel_subscribers,
+                channel_video_count: data.channel_video_count,
+                top_videos: data.top_videos,
+              });
+            }
+          }
+          if (channels.length) store.youtubeChannels = channels;
+        }
+        return JSON.stringify(result);
+      }
 
       case "fetch_x_api":
         return JSON.stringify(
@@ -491,20 +521,34 @@ async function executeTool(
           costUsd: store.llmCostUsd,
           llm_api_costs: llmCosts,
         });
+        // Store per-query results for later injection into meta
+        if (result.query_results && Array.isArray(result.query_results)) {
+          store.llmQueryResults = result.query_results as { query: string; org: string; llm: string; mentioned: boolean; position?: number }[];
+        }
         return JSON.stringify(result);
       }
 
-      case "fetch_wikipedia":
-        return JSON.stringify(
-          await fetchWikipedia(toolInput as unknown as Parameters<typeof fetchWikipedia>[0])
-        );
+      case "fetch_wikipedia": {
+        const result = await fetchWikipedia(toolInput as unknown as Parameters<typeof fetchWikipedia>[0]);
+        if (result.data && Array.isArray(result.data)) {
+          const map: Record<string, WikipediaInfo> = {};
+          for (const w of result.data as WikipediaInfo[]) {
+            if (w.found && w.org) map[w.org] = w;
+          }
+          if (Object.keys(map).length) store.wikiData = map;
+        }
+        return JSON.stringify(result);
+      }
 
-      case "fetch_comment_sentiment":
-        return JSON.stringify(
-          await fetchCommentSentiment(
-            toolInput as unknown as Parameters<typeof fetchCommentSentiment>[0]
-          )
+      case "fetch_comment_sentiment": {
+        const result = await fetchCommentSentiment(
+          toolInput as unknown as Parameters<typeof fetchCommentSentiment>[0]
         );
+        if (result.data && Array.isArray(result.data)) {
+          store.commentSentiment = result.data as CommentSentimentResult[];
+        }
+        return JSON.stringify(result);
+      }
 
       case "present_draft": {
         const { meta: draftMeta, stats_json: draftStatsJson, summary } = toolInput as {
@@ -552,10 +596,17 @@ async function executeTool(
           meta: ReportMeta;
           stats_json: string;
         };
-        // Inject the accumulated Claude cost so the report shows the true cost
+        // Inject the accumulated Claude cost and rich tool data from the store
+        // (Claude often only passes the basic meta fields; we need the store to
+        // preserve tone_evidence, comment_sentiment, youtube_channels, etc.)
         const meta: ReportMeta = {
           ...rawMeta,
           claude_cost_usd: store.claudeCostUsd ?? rawMeta.claude_cost_usd ?? 0,
+          tone_evidence: rawMeta.tone_evidence ?? store.toneEvidence,
+          comment_sentiment: rawMeta.comment_sentiment ?? store.commentSentiment,
+          llm_query_results: rawMeta.llm_query_results ?? store.llmQueryResults,
+          youtube_channels: rawMeta.youtube_channels ?? store.youtubeChannels,
+          wiki_data: rawMeta.wiki_data ?? store.wikiData,
         };
         store.meta = meta;
         let calcResult = store.calcResult;

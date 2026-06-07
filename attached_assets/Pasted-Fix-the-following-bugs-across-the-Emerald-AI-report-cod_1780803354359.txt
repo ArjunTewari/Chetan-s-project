@@ -1,0 +1,12 @@
+Fix the following bugs across the Emerald AI report codebase:
+1. calculator.ts — AEO aggregation
+The stats.aeo array contains raw per-query objects instead of aggregated per-org × LLM summaries. The HTML generator iterates this array expecting fields like mention_count, mention_rate_pct, citation_type, direct_links, visibility_score at the top level — but they're missing, causing undefined/20 (NaN%) across 15 duplicate rows (one per query instead of one per org × LLM). Fix: group/aggregate raw AEO query results into one object per org × LLM pair before returning from runCalculations.
+2. calculator.ts + htmlGenerator.ts — Comment sentiment field mismatch
+The sentiment objects in CalcResult are missing total_relevant, total_fetched, and verdict fields (rendering as undefined in the report). Either the calculator isn't populating these fields, or there's a camelCase vs snake_case mismatch between what the calculator outputs and what the HTML generator accesses. Fix: ensure calculator outputs snake_case fields total_relevant, total_fetched, verdict on every sentiment object, and confirm htmlGenerator.ts accesses them by those exact names.
+3. agent.ts — Journalist tone evidence meta not populated
+The meta.tone_evidence array passed to generate_report has items where org, article_title, and article_date are all undefined. The Serper results contain this data but it's not being mapped into meta.tone_evidence before the tool call. Fix: before calling generate_report, build meta.tone_evidence from the Serper tool output, mapping each result to { org, outlet, tone, article_title, article_date }.
+4. fetchYouTube (tools.ts or wherever it lives) — Two bugs
+
+Only 2 videos are returned instead of 10. Ensure maxResults: 10 is explicitly set in the API call params.
+All video dates show "Invalid Date". The publishedAt field is nested at video.snippet.publishedAt, not video.publishedAt. Fix the access path.
+Change the label logic in htmlGenerator.ts: instead of hardcoding "Top 10 Videos by View Count", render "Videos Published in Period · Sorted by Views at Time of Report" and only show videos whose publishedAt falls within meta.date_range.from → meta.date_range.to. Use search.list with publishedAfter / publishedBefore params to filter at the API level.
