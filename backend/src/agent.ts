@@ -7,7 +7,7 @@ import {
   calcCost,
 } from "./anthropicClient";
 import { runCalculations, type RawInput } from "./calculator";
-import { generateHTMLReport, type ReportMeta, type ToneEvidenceItem, type YouTubeChannelData } from "./htmlGenerator";
+import { generateHTMLReport, type ReportMeta, type ToneEvidenceItem, type YouTubeChannelData, type ReportTemplate } from "./htmlGenerator";
 import {
   fetchSerper,
   fetchYouTube,
@@ -47,6 +47,8 @@ export interface AgentOptions {
   reportMeta?: ReportMeta | null;
   /** Summary of the last generated report — injected into the system prompt for QUERY intent */
   reportSummary?: string | null;
+  /** Report template — controls which sections appear and their titles/descriptions */
+  reportTemplate?: ReportTemplate | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -454,6 +456,8 @@ interface ToolResultStore {
   llmQueryResults?: { query: string; org: string; llm: string; mentioned: boolean; position?: number }[];
   wikiData?: Record<string, WikipediaInfo>;
   youtubeChannels?: YouTubeChannelData[];
+  /** Report template from the frontend — passed to generateHTMLReport */
+  reportTemplate?: ReportTemplate;
 }
 
 // ---------------------------------------------------------------------------
@@ -622,7 +626,7 @@ async function executeTool(
             return JSON.stringify({ error: "Invalid stats_json" });
           }
         }
-        const html = generateHTMLReport(meta, calcResult);
+        const html = generateHTMLReport(meta, calcResult, store.reportTemplate);
         store.htmlReport = html;
         store.statsJson = JSON.stringify(calcResult);
         // Send a lightweight signal — frontend fetches the full HTML from the API
@@ -662,7 +666,7 @@ async function executeTool(
           api_costs:          claudeMeta?.api_costs          ?? store.meta?.api_costs,
           claude_cost_usd:    claudeMeta?.claude_cost_usd    ?? store.meta?.claude_cost_usd,
         };
-        const html = generateHTMLReport(richMeta, calcResult);
+        const html = generateHTMLReport(richMeta, calcResult, store.reportTemplate);
         store.htmlReport = html;
         store.meta = richMeta;
         store.statsJson = JSON.stringify(calcResult);
@@ -732,6 +736,7 @@ export async function runAgent(opts: AgentOptions): Promise<{
   const store: ToolResultStore = {
     meta: opts.reportMeta ?? undefined,
     statsJson: opts.reportStatsJson ?? undefined,
+    reportTemplate: opts.reportTemplate ?? undefined,
   };
   const toolCallsRecord: Array<{ tool: string; input: unknown; output: unknown }> = [];
 

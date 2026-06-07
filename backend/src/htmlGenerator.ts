@@ -2,6 +2,40 @@
 import type { CalcResult } from "./calculator";
 import type { LLMApiCost, CommentSentimentResult, WikipediaInfo } from "./tools";
 
+// ── Report Template ───────────────────────────────────────────────────────────
+
+export interface TemplateSectionConfig {
+  id: string;
+  enabled: boolean;
+  title: string;
+  description: string;
+}
+
+export interface ReportTemplate {
+  reportTitle?: string;
+  clientName?: string;
+  sections: TemplateSectionConfig[];
+}
+
+export const DEFAULT_SECTIONS: TemplateSectionConfig[] = [
+  { id: "methodology",     enabled: true, title: "Methodology & Definitions",
+    description: "How each table is built, what the metrics mean, and which benchmarks are used." },
+  { id: "social",          enabled: true, title: "Social Media Engagement",
+    description: "Reach and engagement across YouTube (Long-form + Shorts) and X. Benchmarks = Rival IQ 2025 Nonprofit medians." },
+  { id: "media",           enabled: true, title: "Media Coverage",
+    description: "News mentions, dofollow links, direct citations, and journalist tone across tracked outlets. AQ content only." },
+  { id: "journalist_tone", enabled: true, title: "Journalist Tone Evidence",
+    description: "Representative articles used to classify journalist tone per organisation × outlet. Every tone classification is traceable to a source article." },
+  { id: "wikipedia",       enabled: true, title: "Organisation Context",
+    description: "Background context from Wikipedia — supplementary to media coverage data, not scored." },
+  { id: "aeo",             enabled: true, title: "AEO / LLM Visibility",
+    description: "How often each organisation appears in LLM responses to generic air-quality discovery queries. 5 queries per LLM, scored out of 20." },
+  { id: "scorecards",      enabled: true, title: "Organisation Scorecards",
+    description: "Weighted composite: Social 30% · Media 40% · AEO 30% | A ≥80 · B 65–79 · C 50–64 · D 35–49 · F <35" },
+  { id: "action_matrix",   enabled: true, title: "AI Insights — Action Matrix",
+    description: "Every insight references specific numbers from Tables 1–3. Rows = organisations. Columns = priority type." },
+];
+
 export interface YouTubeChannelData {
   handle:               string;
   channel_title:        string;
@@ -44,8 +78,16 @@ export interface ReportMeta {
   wiki_data?: Record<string, WikipediaInfo>;
 }
 
-export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string {
-  const title = `Air Quality Media Intelligence Report`;
+export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template?: ReportTemplate): string {
+  // ── Template helpers ────────────────────────────────────────────────────────
+  const tmplSections = template?.sections?.length ? template.sections : DEFAULT_SECTIONS;
+  const sectionMap = Object.fromEntries(tmplSections.map(s => [s.id, s]));
+  const isEnabled = (id: string) => sectionMap[id]?.enabled !== false;
+  const getTitle = (id: string, fallback: string) => sectionMap[id]?.title?.trim() || fallback;
+  const getDesc = (id: string, fallback: string) => sectionMap[id]?.description?.trim() || fallback;
+
+  const title = template?.reportTitle?.trim() || `Air Quality Media Intelligence Report`;
+  const clientName = template?.clientName?.trim() || meta.client_name;
   const subtitle = `${meta.orgs.join(", ")} · ${meta.date_range.from} to ${meta.date_range.to}`;
   const generatedAt = new Date().toISOString();
 
@@ -421,7 +463,7 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
   <h1 class="cover-title">${title}</h1>
   <p class="cover-subtitle">${subtitle}</p>
   <div class="cover-meta">
-    ${meta.client_name ? `<div class="cover-meta-item"><div class="cover-meta-label">Prepared for</div><div class="cover-meta-value">${meta.client_name}</div></div>` : ""}
+    ${clientName ? `<div class="cover-meta-item"><div class="cover-meta-label">Prepared for</div><div class="cover-meta-value">${clientName}</div></div>` : ""}
     <div class="cover-meta-item"><div class="cover-meta-label">Prepared by</div><div class="cover-meta-value">Emerald AI</div></div>
     <div class="cover-meta-item"><div class="cover-meta-label">Organisations</div><div class="cover-meta-value">${meta.orgs.join(", ")}</div></div>
     <div class="cover-meta-item"><div class="cover-meta-label">Period</div><div class="cover-meta-value">${meta.date_range.from} → ${meta.date_range.to}</div></div>
@@ -437,23 +479,22 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult): string 
 </div>
 
 <nav class="nav">
-  <a href="#methodology">Methodology</a>
-  <a href="#social">Social</a>
-  <a href="#media">Media</a>
-  <a href="#journalist-tone">Journalist Tone</a>
-  ${wikiEntries.length > 0 ? `<a href="#wikipedia-context">Org Context</a>` : ""}
-  <a href="#aeo">AEO / LLM</a>
-  <a href="#scorecards">Scorecards</a>
-  <a href="#action-matrix">Action Matrix</a>
-  <a href="#cost">Cost</a>
+  ${isEnabled("methodology") ? `<a href="#methodology">${getTitle("methodology","Methodology")}</a>` : ""}
+  ${isEnabled("social") ? `<a href="#social">${getTitle("social","Social")}</a>` : ""}
+  ${isEnabled("media") ? `<a href="#media">${getTitle("media","Media")}</a>` : ""}
+  ${isEnabled("journalist_tone") ? `<a href="#journalist-tone">${getTitle("journalist_tone","Journalist Tone")}</a>` : ""}
+  ${isEnabled("wikipedia") && wikiEntries.length > 0 ? `<a href="#wikipedia-context">${getTitle("wikipedia","Org Context")}</a>` : ""}
+  ${isEnabled("aeo") ? `<a href="#aeo">${getTitle("aeo","AEO / LLM")}</a>` : ""}
+  ${isEnabled("scorecards") ? `<a href="#scorecards">${getTitle("scorecards","Scorecards")}</a>` : ""}
+  ${isEnabled("action_matrix") ? `<a href="#action-matrix">${getTitle("action_matrix","Action Matrix")}</a>` : ""}
 </nav>
 
 ${stats.sanity_errors?.length ? `<div class="section"><div class="sanity-box"><h4>⚠ Data Quality Warnings</h4><ul>${stats.sanity_errors.map((e)=>`<li>${e}</li>`).join("")}</ul></div></div>` : ""}
 
 <!-- ══ METHODOLOGY ═══════════════════════════════════════════════════════════ -->
-<div id="methodology" class="section">
-  <h2 class="section-title">Methodology &amp; Definitions</h2>
-  <p class="section-desc">How each table is built, what the metrics mean, and which benchmarks are used.</p>
+${isEnabled("methodology") ? `<div id="methodology" class="section">
+  <h2 class="section-title">${getTitle("methodology","Methodology &amp; Definitions")}</h2>
+  <p class="section-desc">${getDesc("methodology","How each table is built, what the metrics mean, and which benchmarks are used.")}</p>
   <div class="metric-note">
     <strong>Table 1 — Social Media Engagement</strong><br>
     Platforms: YouTube (Long-form + Shorts), X/Twitter, Instagram, LinkedIn — where confirmed handles exist.
@@ -475,15 +516,15 @@ ${stats.sanity_errors?.length ? `<div class="section"><div class="sanity-box"><h
     AI Visibility Scale is Emerald AI v1.0 — no universal industry standard exists as of 2025.
     Methodology reference: Aggarwal et al. (2023) <em>GEO: Generative Engine Optimisation</em> — <a href="https://arxiv.org/abs/2311.09735" target="_blank" style="color:var(--emerald)">arxiv.org/abs/2311.09735</a>
   </div>
-</div>
+</div>` : ""}
 
 <!-- ══ SOCIAL ═════════════════════════════════════════════════════════════════ -->
-<div id="social" class="section">
-  <h2 class="section-title">Social Media Engagement
+${isEnabled("social") ? `<div id="social" class="section">
+  <h2 class="section-title">${getTitle("social","Social Media Engagement")}
     <span class="source-badge source-real">● YouTube Live</span>
     <span class="source-badge source-stub">○ X Simulated</span>
   </h2>
-  <p class="section-desc">Reach and engagement across YouTube (Long-form + Shorts) and X. Benchmarks = Rival IQ 2025 Nonprofit medians.</p>
+  <p class="section-desc">${getDesc("social","Reach and engagement across YouTube (Long-form + Shorts) and X. Benchmarks = Rival IQ 2025 Nonprofit medians.")}</p>
   <div class="metric-note">
     <strong>Impressions / Views</strong> — top-10 video views (all-time, YouTube Data API v3 limitation). &nbsp;
     <strong>ER %</strong> — engagement ÷ impressions × 100. &nbsp;
@@ -535,14 +576,14 @@ ${stats.sanity_errors?.length ? `<div class="section"><div class="sanity-box"><h
     </thead>
     <tbody>${socialRows}${placeholderRows}</tbody>
   </table>
-</div>
+</div>` : ""}
 
 <!-- ══ MEDIA ══════════════════════════════════════════════════════════════════ -->
-<div id="media" class="section">
-  <h2 class="section-title">Media Coverage
+${isEnabled("media") ? `<div id="media" class="section">
+  <h2 class="section-title">${getTitle("media","Media Coverage")}
     <span class="source-badge source-real">● Serper News API</span>
   </h2>
-  <p class="section-desc">News mentions, dofollow links, direct citations, and journalist tone across tracked outlets. AQ content only.</p>
+  <p class="section-desc">${getDesc("media","News mentions, dofollow links, direct citations, and journalist tone across tracked outlets. AQ content only.")}</p>
   <div class="metric-note">
     <strong>Total Mentions</strong> — articles found via Serper News API (Google News index). Uses a 5-tier fallback: (1) site-specific search, (2) quoted org name, (3) topic-only search, (4) backup specialist outlets (Down To Earth, The Wire, Mongabay India, Scroll, The Print, etc.), (5) broad web search. Outlet names marked with ★ were found through backup searches. &nbsp;
     <strong>Dofollow Links</strong> — estimated backlinks passing domain authority (60% of mentions for major outlets). &nbsp;
@@ -556,16 +597,16 @@ ${stats.sanity_errors?.length ? `<div class="section"><div class="sanity-box"><h
     </tr></thead>
     <tbody>${mediaRows}</tbody>
   </table>
-</div>
+</div>` : ""}
 
-${wikiSection}
+${isEnabled("wikipedia") ? wikiSection : ""}
 
 <!-- ══ JOURNALIST TONE ════════════════════════════════════════════════════════ -->
-<div id="journalist-tone" class="section">
-  <h2 class="section-title">Journalist Tone Evidence
+${isEnabled("journalist_tone") ? `<div id="journalist-tone" class="section">
+  <h2 class="section-title">${getTitle("journalist_tone","Journalist Tone Evidence")}
     <span class="source-badge source-real">● Serper Articles</span>
   </h2>
-  <p class="section-desc">Representative articles used to classify journalist tone per organisation × outlet. Every tone classification is traceable to a source article.</p>
+  <p class="section-desc">${getDesc("journalist_tone","Representative articles used to classify journalist tone per organisation × outlet. Every tone classification is traceable to a source article.")}</p>
   <div class="metric-note">
     <strong>Authoritative</strong> — org is cited as the primary expert source; researcher quoted directly; research named as the primary data anchor. &nbsp;
     <strong>Neutral</strong> — org is mentioned among several sources; not positioned as the lead expert. &nbsp;
@@ -579,14 +620,14 @@ ${wikiSection}
     </tr></thead>
     <tbody>${toneEvidenceRows}</tbody>
   </table>` : `<p style="color:var(--text-muted);font-size:13px">No tone evidence data — run fetch_serper to populate this section.</p>`}
-</div>
+</div>` : ""}
 
 <!-- ══ AEO / LLM ══════════════════════════════════════════════════════════════ -->
-<div id="aeo" class="section">
-  <h2 class="section-title">AEO / LLM Visibility
+${isEnabled("aeo") ? `<div id="aeo" class="section">
+  <h2 class="section-title">${getTitle("aeo","AEO / LLM Visibility")}
     <span class="source-badge source-real">● Live API Calls</span>
   </h2>
-  <p class="section-desc">How often each organisation appears in LLM responses to generic air-quality discovery queries. 5 queries per LLM, scored out of 20.</p>
+  <p class="section-desc">${getDesc("aeo","How often each organisation appears in LLM responses to generic air-quality discovery queries. 5 queries per LLM, scored out of 20.")}</p>
 
   <div class="metric-note">
     <strong>Methodology</strong> — 5 generic discovery queries run live per LLM (ChatGPT, Perplexity, Gemini). Queries are deliberately non-org-specific — the score measures unprompted natural mentions, which is the true test of AEO effectiveness. Reference: Aggarwal et al. (2023) <em>GEO</em> paper. &nbsp;
@@ -623,19 +664,19 @@ ${wikiSection}
     </tr></thead>
     <tbody>${queryPerfRows}</tbody>
   </table>` : ""}
-</div>
+</div>` : ""}
 
 <!-- ══ SCORECARDS ═════════════════════════════════════════════════════════════ -->
-<div id="scorecards" class="section">
-  <h2 class="section-title">Organisation Scorecards</h2>
-  <p class="section-desc">Weighted composite: Social 30% · Media 40% · AEO 30% &nbsp;|&nbsp; A ≥80 · B 65–79 · C 50–64 · D 35–49 · F &lt;35</p>
+${isEnabled("scorecards") ? `<div id="scorecards" class="section">
+  <h2 class="section-title">${getTitle("scorecards","Organisation Scorecards")}</h2>
+  <p class="section-desc">${getDesc("scorecards","Weighted composite: Social 30% · Media 40% · AEO 30% &nbsp;|&nbsp; A ≥80 · B 65–79 · C 50–64 · D 35–49 · F &lt;35")}</p>
   <div class="scorecards-grid">${scorecardCards}</div>
-</div>
+</div>` : ""}
 
 <!-- ══ ACTION MATRIX ══════════════════════════════════════════════════════════ -->
-<div id="action-matrix" class="section">
-  <h2 class="section-title">AI Insights — Action Matrix</h2>
-  <p class="section-desc">Every insight references specific numbers from Tables 1–3. Rows = organisations (scalable). Columns = priority type.</p>
+${isEnabled("action_matrix") ? `<div id="action-matrix" class="section">
+  <h2 class="section-title">${getTitle("action_matrix","AI Insights — Action Matrix")}</h2>
+  <p class="section-desc">${getDesc("action_matrix","Every insight references specific numbers from Tables 1–3. Rows = organisations (scalable). Columns = priority type.")}</p>
   <div class="metric-note" style="margin-bottom:20px">
     <span class="badge action-fix-now">🟠 Fix Now</span>&nbsp; Urgent risk — act this week. &nbsp;&nbsp;
     <span class="badge action-leverage">🟢 Leverage</span>&nbsp; Highest-value asset — double down. &nbsp;&nbsp;
@@ -648,7 +689,7 @@ ${wikiSection}
     </tr></thead>
     <tbody>${actionRows}</tbody>
   </table>
-</div>
+</div>` : ""}
 
 <footer class="footer">
   Generated by <strong>Emerald AI</strong> · Air Quality Media Intelligence Platform · ${new Date(generatedAt).toUTCString()} · <strong>CONFIDENTIAL</strong>

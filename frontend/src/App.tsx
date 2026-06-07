@@ -7,6 +7,38 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 // ─── Types ─────────────────────────────────────────────────────────────────
 type Role = "user" | "assistant" | "system";
 
+interface TemplateSectionConfig {
+  id: string;
+  enabled: boolean;
+  title: string;
+  description: string;
+}
+
+interface ReportTemplate {
+  reportTitle?: string;
+  clientName?: string;
+  sections: TemplateSectionConfig[];
+}
+
+const DEFAULT_SECTIONS: TemplateSectionConfig[] = [
+  { id: "methodology",     enabled: true, title: "Methodology & Definitions",
+    description: "How each table is built, what the metrics mean, and which benchmarks are used." },
+  { id: "social",          enabled: true, title: "Social Media Engagement",
+    description: "Reach and engagement across YouTube (Long-form + Shorts) and X." },
+  { id: "media",           enabled: true, title: "Media Coverage",
+    description: "News mentions, dofollow links, direct citations, and journalist tone." },
+  { id: "journalist_tone", enabled: true, title: "Journalist Tone Evidence",
+    description: "Representative articles for each journalist tone classification." },
+  { id: "wikipedia",       enabled: true, title: "Organisation Context",
+    description: "Background context from Wikipedia." },
+  { id: "aeo",             enabled: true, title: "AEO / LLM Visibility",
+    description: "How often each organisation appears in LLM responses." },
+  { id: "scorecards",      enabled: true, title: "Organisation Scorecards",
+    description: "Weighted composite: Social 30% · Media 40% · AEO 30%." },
+  { id: "action_matrix",   enabled: true, title: "AI Insights — Action Matrix",
+    description: "Data-anchored priority actions per organisation." },
+];
+
 interface LLMApiCost { service: string; model: string; requests: number; input_tokens: number; output_tokens: number; cost_usd: number; }
 
 interface Message {
@@ -103,8 +135,46 @@ export default function App() {
   const [ytStatus, setYtStatus] = useState<"unknown" | "connected" | "disconnected">("unknown");
   const [convList, setConvList] = useState<ConvListItem[]>([]);
   const [isAuthed, setIsAuthed] = useState(() => sessionStorage.getItem("emerald_authed") === "1");
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  const [reportTemplate, setReportTemplate] = useState<ReportTemplate>(() => {
+    try {
+      const saved = localStorage.getItem("emerald_report_template");
+      if (saved) return JSON.parse(saved) as ReportTemplate;
+    } catch { /* ignore */ }
+    return { reportTitle: "", clientName: "", sections: DEFAULT_SECTIONS.map(s => ({ ...s })) };
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const updateTemplate = (updater: (prev: ReportTemplate) => ReportTemplate) => {
+    setReportTemplate(prev => {
+      const next = updater(prev);
+      localStorage.setItem("emerald_report_template", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const toggleSection = (id: string) => {
+    updateTemplate(prev => ({
+      ...prev,
+      sections: prev.sections.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s),
+    }));
+  };
+
+  const updateSectionTitle = (id: string, title: string) => {
+    updateTemplate(prev => ({
+      ...prev,
+      sections: prev.sections.map(s => s.id === id ? { ...s, title } : s),
+    }));
+  };
+
+  const resetTemplate = () => {
+    updateTemplate(() => ({
+      reportTitle: "",
+      clientName: "",
+      sections: DEFAULT_SECTIONS.map(s => ({ ...s })),
+    }));
+  };
 
   // Fade out welcome on first user message
   const hasUserMessages = messages.some((m) => m.role === "user");
@@ -289,7 +359,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/conversations/${convId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, reportTemplate }),
       });
 
       if (!res.body) throw new Error("No response body");
@@ -511,6 +581,96 @@ export default function App() {
               </button>
             )}
           </div>
+        </div>
+
+        {/* Report Template Editor */}
+        <div style={styles.sideSection}>
+          <button
+            style={{ ...styles.sideSectionTitle, all: "unset", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const, color: "#484f58" }}
+            onClick={() => setShowTemplateEditor(v => !v)}
+          >
+            <span>Report Template</span>
+            <span style={{ fontSize: 10, color: "#484f58", opacity: 0.7 }}>{showTemplateEditor ? "▲" : "▼"}</span>
+          </button>
+
+          {showTemplateEditor && (
+            <div style={{ marginTop: 10 }}>
+              {/* Report title + client name */}
+              <div style={{ marginBottom: 8 }}>
+                <input
+                  style={styles.tmplInput}
+                  placeholder="Report title (optional)"
+                  value={reportTemplate.reportTitle ?? ""}
+                  onChange={e => updateTemplate(p => ({ ...p, reportTitle: e.target.value }))}
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <input
+                  style={styles.tmplInput}
+                  placeholder="Client name (optional)"
+                  value={reportTemplate.clientName ?? ""}
+                  onChange={e => updateTemplate(p => ({ ...p, clientName: e.target.value }))}
+                />
+              </div>
+
+              {/* Section rows */}
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" as const, color: "#484f58", marginBottom: 6 }}>Sections</div>
+              {reportTemplate.sections.map(section => (
+                <div key={section.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  {/* Toggle */}
+                  <button
+                    title={section.enabled ? "Click to hide section" : "Click to show section"}
+                    onClick={() => toggleSection(section.id)}
+                    style={{
+                      flex: "0 0 auto",
+                      width: 28,
+                      height: 16,
+                      borderRadius: 8,
+                      border: "none",
+                      cursor: "pointer",
+                      background: section.enabled ? "#4ade80" : "#333",
+                      position: "relative" as const,
+                      transition: "background 0.2s",
+                      padding: 0,
+                    }}
+                  >
+                    <span style={{
+                      position: "absolute" as const,
+                      top: 2,
+                      left: section.enabled ? 14 : 2,
+                      width: 12,
+                      height: 12,
+                      borderRadius: "50%",
+                      background: "#fff",
+                      transition: "left 0.2s",
+                    }} />
+                  </button>
+                  {/* Title input */}
+                  <input
+                    style={{
+                      ...styles.tmplInput,
+                      flex: 1,
+                      opacity: section.enabled ? 1 : 0.4,
+                      fontSize: 11,
+                    }}
+                    value={section.title}
+                    onChange={e => updateSectionTitle(section.id, e.target.value)}
+                    disabled={!section.enabled}
+                    placeholder={DEFAULT_SECTIONS.find(d => d.id === section.id)?.title ?? section.id}
+                  />
+                </div>
+              ))}
+
+              {/* Reset */}
+              <button
+                style={{ ...styles.newChatBtn, marginTop: 6, fontSize: 10, padding: "3px 8px", background: "none", border: "1px solid #333", color: "#666" }}
+                className="quick-btn"
+                onClick={resetTemplate}
+              >
+                Reset to defaults
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Previous chats */}
@@ -1476,6 +1636,18 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     fontSize: 11,
     fontWeight: 600,
+  },
+  tmplInput: {
+    width: "100%",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: 5,
+    color: "#d0d0d0",
+    fontSize: 11,
+    padding: "4px 7px",
+    outline: "none",
+    boxSizing: "border-box" as const,
+    fontFamily: "'Inter', sans-serif",
   },
   convItem: {
     display: "block",

@@ -217,7 +217,7 @@ app.delete("/conversations/:id", async (req, res) => {
 /** Chat endpoint — streams SSE */
 app.post("/conversations/:id/chat", async (req, res) => {
   const id = parseInt(req.params.id);
-  const { message } = req.body as { message?: string };
+  const { message, reportTemplate } = req.body as { message?: string; reportTemplate?: unknown };
 
   if (!message?.trim()) {
     res.status(400).json({ error: "message is required" });
@@ -250,6 +250,9 @@ app.post("/conversations/:id/chat", async (req, res) => {
       reportStatsJson: reportData?.statsJson ?? null,
       reportMeta: reportData?.reportMeta ?? null,
       reportSummary: reportData?.reportSummary ?? null,
+      reportTemplate: (reportTemplate && typeof reportTemplate === "object" && "sections" in (reportTemplate as object))
+        ? (reportTemplate as import("./htmlGenerator").ReportTemplate)
+        : null,
     });
 
     // Persist user + assistant messages
