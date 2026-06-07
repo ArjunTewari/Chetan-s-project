@@ -391,7 +391,7 @@ app.get("/conversations/:id/stats", async (req, res) => {
 // ---------------------------------------------------------------------------
 // Healthcheck (must not depend on DB — used by deployment probes)
 // ---------------------------------------------------------------------------
-app.get("/", (req, res) => {
+app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "emerald-ai-backend" });
 });
 
