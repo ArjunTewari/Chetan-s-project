@@ -4,13 +4,13 @@ import path from "path";
 config({ path: path.resolve(__dirname, "../.env") });
 import express from "express";
 import cors from "cors";
+import { logger } from "./logger";
+import { pool, initSchema } from "./db";
+import { getAuthUrl, exchangeCode, isAuthorized } from "./youtubeOAuth";
 import { runAgent, sendEvent, type ConversationMessage } from "./agent";
 import { type ReportMeta } from "./htmlGenerator";
 import { generatePPTX } from "./pptxGenerator";
 import { type CalcResult } from "./calculator";
-import { getAuthUrl, exchangeCode, isAuthorized } from "./youtubeOAuth";
-import { logger } from "./logger";
-import { pool, initSchema } from "./db";
 
 const app = express();
 const PORT = process.env.PORT ?? (process.env.NODE_ENV === "production" ? 5000 : 3001);

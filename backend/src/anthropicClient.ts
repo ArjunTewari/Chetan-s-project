@@ -11,12 +11,16 @@ export const COST_PER_OUTPUT_TOKEN       = 15.00 / 1_000_000;
 export const COST_PER_CACHE_WRITE_TOKEN  = 3.75  / 1_000_000; // +25% on first write
 export const COST_PER_CACHE_READ_TOKEN   = 0.30  / 1_000_000; // −90% on subsequent reads
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  throw new Error("ANTHROPIC_API_KEY environment variable is required");
+function ensureApiKey(): string {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    throw new Error("ANTHROPIC_API_KEY environment variable is required");
+  }
+  return key;
 }
 
 export const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+  apiKey: ensureApiKey(),
 });
 
 export function calcCost(
