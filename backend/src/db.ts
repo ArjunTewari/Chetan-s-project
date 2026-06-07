@@ -35,5 +35,9 @@ export async function initSchema(): Promise<void> {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+  // Migration: add report_summary column if missing (deployed DBs created before this column)
+  await pool.query(`
+    ALTER TABLE reports ADD COLUMN IF NOT EXISTS report_summary TEXT;
+  `).catch(() => { /* ignore if table doesn't exist yet (handled by CREATE TABLE) */ });
   logger.info("Database schema initialised");
 }
