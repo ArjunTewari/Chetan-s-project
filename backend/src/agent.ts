@@ -12,6 +12,8 @@ import {
   fetchSerper,
   fetchYouTube,
   fetchXApi,
+  fetchInstagram,
+  fetchLinkedIn,
   fetchSemrush,
   fetchLLMVisibility,
   fetchCommentSentiment,
@@ -97,7 +99,7 @@ If you are about to type headings, bullet points, or data tables into a text res
 Violating this rule means the user cannot view, download, or interact with the report.
 
 ## GENERATE workflow — follow this order exactly
-1. Fetch all data IN PARALLEL where possible: fetch_serper, fetch_youtube, fetch_x_api, fetch_llm_visibility
+1. Fetch all data IN PARALLEL where possible: fetch_serper, fetch_youtube, fetch_x_api, fetch_instagram, fetch_linkedin, fetch_llm_visibility
 2. After ALL fetches are done, call fetch_comment_sentiment
 3. Check data quality: if ANY org has total media mentions < 5, also call fetch_wikipedia for all orgs
 4. Call run_calculation with ALL the fetched data — this is MANDATORY, never skip it
@@ -123,6 +125,13 @@ Violating this rule means the user cannot view, download, or interact with the r
 - After all data-fetch tools complete, your immediate next call MUST be run_calculation — no text response in between.
 - After run_calculation, your immediate next call MUST be present_draft — no text response in between.
 - Call BOTH fetch_youtube AND fetch_x_api for social data.
+- Call fetch_instagram with org Instagram handles (e.g. @ceew_india) and query_keywords matching the topic. If the handle is unknown, use the org name as the handle — the fetcher will search by org name. source='not_found' means the org has no indexed Instagram presence; mark the row as "handle not confirmed" in the report.
+- Call fetch_linkedin with org LinkedIn company slugs or names and query_keywords. source='not_found' means no indexed LinkedIn presence; mark as "handle not confirmed".
+- fetch_instagram returns: { data: { [handle]: { platform, impressions, likes, comments, saves, indexed_posts, source } } }
+- fetch_linkedin returns: { data: { [handle]: { platform, impressions, likes, shares, comments, indexed_posts, source } } }
+→ Add Instagram entry from fetch_instagram as: { org, platform: "Instagram", impressions, likes, shares: 0, comments, saves, quote_rt: 0 }
+→ Add LinkedIn entry from fetch_linkedin as: { org, platform: "LinkedIn", impressions, likes, shares, comments, saves: 0, quote_rt: 0 }
+→ If source = "not_found", still add the row but set all metrics to 0 so the report shows the platform with "(handle not confirmed)" label.
 - Pass ALL raw data from fetch calls into run_calculation.
 - If data is genuinely 0 after all fallbacks, report it honestly with context ("no indexed coverage found in this period").
 - Be precise and concise — users are analysts, not novices.
@@ -166,7 +175,8 @@ Build org_video_pairs from the fetch_youtube result:
   for each handle: { org: <org name matching meta.orgs>, video_ids: <top_videos[].videoId> }
 Pass result.data as meta.comment_sentiment to generate_report.
 If fetch_comment_sentiment returns empty data, pass an empty array [].
-`;}
+`;
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -227,6 +237,44 @@ const TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["handles", "date_range"],
+    },
+  },
+  {
+    name: "fetch_instagram",
+    description:
+      "Fetch Instagram engagement metrics (impressions, likes, comments, saves) for org handles via Serper search. Meta Graph API is owner-only; this uses Google-indexed Instagram posts as a proxy. Returns estimated metrics with source='serper_instagram_posts' or 'not_found'. Pass handles as @slug or plain slug, e.g. '@ceew_india'.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        handles: { type: "array", items: { type: "string" }, description: "Instagram handles, e.g. ['@ceew_india', '@cstep_india']" },
+        orgs:    { type: "array", items: { type: "string" }, description: "Org names matching handles order, e.g. ['CEEW', 'CSTEP']" },
+        date_range: {
+          type: "object",
+          properties: { from: { type: "string" }, to: { type: "string" } },
+          required: ["from", "to"],
+        },
+        query_keywords: { type: "array", items: { type: "string" }, description: "Topic keywords e.g. ['air quality', 'AQI', 'pollution']" },
+      },
+      required: ["handles", "orgs", "date_range", "query_keywords"],
+    },
+  },
+  {
+    name: "fetch_linkedin",
+    description:
+      "Fetch LinkedIn engagement metrics (impressions, likes/reactions, shares, comments) for org pages via Serper search. LinkedIn API is owner-only; this uses Google-indexed LinkedIn posts as a proxy. Returns estimated metrics with source='serper_linkedin_posts' or 'not_found'. Pass handles as company slug or org name.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        handles: { type: "array", items: { type: "string" }, description: "LinkedIn company slugs or org names, e.g. ['ceew-council-on-energy', 'cstep-india']" },
+        orgs:    { type: "array", items: { type: "string" }, description: "Org names matching handles order, e.g. ['CEEW', 'CSTEP']" },
+        date_range: {
+          type: "object",
+          properties: { from: { type: "string" }, to: { type: "string" } },
+          required: ["from", "to"],
+        },
+        query_keywords: { type: "array", items: { type: "string" }, description: "Topic keywords e.g. ['air quality', 'AQI', 'pollution']" },
+      },
+      required: ["handles", "orgs", "date_range", "query_keywords"],
     },
   },
   {
@@ -409,429 +457,350 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object" as const,
       properties: {
+        meta: {
+          type: "object",
+          description: "Report metadata (pass the full meta object from the original report)",
+        },
+        stats_json: {
+          type: "string",
+          description: "Updated stats JSON string (or pass the original if only metadata changed)",
+        },
         section: {
           type: "string",
-          description: "Section name: social | media | aeo | action_matrix | scorecards",
+          description: "Section name: social, media, aeo, scorecards, action_matrix",
         },
-        updated_stats_json: { type: "string", description: "JSON of the updated stats" },
-        meta: { type: "object", description: "Report metadata" },
       },
-      required: ["section", "updated_stats_json", "meta"],
+      required: ["meta", "stats_json", "section"],
     },
   },
 ];
 
 // ---------------------------------------------------------------------------
-// Tool label map for SSE display
+// Internal state
 // ---------------------------------------------------------------------------
-const TOOL_LABELS: Record<string, string> = {
-  fetch_serper: "Fetching news & media mentions...",
-  fetch_youtube: "Fetching YouTube metrics...",
-  fetch_x_api: "Fetching X engagement data...",
-  fetch_semrush: "Fetching SEMrush backlink data...",
-  fetch_llm_visibility: "Running LLM visibility queries...",
-  fetch_wikipedia:         "Fetching Wikipedia context for organisations...",
-  fetch_comment_sentiment: "Analysing YouTube comment sentiment...",
-  present_draft: "Preparing draft for review...",
-  run_calculation: "Running calculations...",
-  generate_report: "Generating HTML report...",
-  update_report_section: "Updating report section...",
-};
-
-// ---------------------------------------------------------------------------
-// Tool result store (shared across loop iterations)
-// ---------------------------------------------------------------------------
-interface ToolResultStore {
-  statsJson?: string;
-  calcResult?: ReturnType<typeof runCalculations>;
-  meta?: ReportMeta;
-  htmlReport?: string;
+interface AgentState {
   reportSummary?: string;
-  claudeCostUsd?: number; // accumulated before generate_report is called
-  llmCostUsd?: number; // accumulated from fetch_llm_visibility
-  serperCostUsd?: number; // accumulated from fetch_serper
-  // Rich data from tool results — injected into meta on generate_report
-  toneEvidence?: ToneEvidenceItem[];
-  commentSentiment?: CommentSentimentResult[];
-  llmQueryResults?: { query: string; org: string; llm: string; mentioned: boolean; position?: number }[];
-  wikiData?: Record<string, WikipediaInfo>;
-  youtubeChannels?: YouTubeChannelData[];
-  /** Report template from the frontend — passed to generateHTMLReport */
-  reportTemplate?: ReportTemplate;
+  meta: ReportMeta;
+  statsJson: string;
+  htmlReport: string;
+  toolCalls: Record<string, number>;
+  toolCallsRecord: { tool: string; input: Record<string, unknown>; output: Record<string, unknown> }[];
 }
 
 // ---------------------------------------------------------------------------
-// Execute a single tool call
+// Run agent
 // ---------------------------------------------------------------------------
-async function executeTool(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  store: ToolResultStore,
-  res: Response
-): Promise<string> {
-  try {
-    switch (toolName) {
-      case "fetch_serper": {
-        const result = await fetchSerper(toolInput as unknown as Parameters<typeof fetchSerper>[0]);
-        if (result.serper_requests) {
-          const serperCost = result.serper_requests * 0.001;
-          store.serperCostUsd = (store.serperCostUsd ?? 0) + serperCost;
-          sendEvent(res, { type: "serper_cost", costUsd: store.serperCostUsd });
-        }
-        // Store tone evidence for later injection into meta
-        if (result.tone_evidence && Array.isArray(result.tone_evidence)) {
-          store.toneEvidence = result.tone_evidence as ToneEvidenceItem[];
-        }
-        return JSON.stringify(result);
-      }
-
-      case "fetch_youtube": {
-        const result = await fetchYouTube(toolInput as unknown as Parameters<typeof fetchYouTube>[0]);
-        // Store YouTube channels for later injection into meta
-        if (result.stub === false && result.data) {
-          const channels: YouTubeChannelData[] = [];
-          for (const [handle, data] of Object.entries(result.data)) {
-            if (data.top_videos) {
-              channels.push({
-                handle,
-                channel_title: data.channel_title,
-                channel_id: data.channel_id,
-                channel_total_views: data.channel_total_views,
-                channel_subscribers: data.channel_subscribers,
-                channel_video_count: data.channel_video_count,
-                top_videos: data.top_videos,
-              });
-            }
-          }
-          if (channels.length) store.youtubeChannels = channels;
-        }
-        return JSON.stringify(result);
-      }
-
-      case "fetch_x_api":
-        return JSON.stringify(
-          await fetchXApi(toolInput as unknown as Parameters<typeof fetchXApi>[0])
-        );
-
-      case "fetch_semrush":
-        return JSON.stringify(
-          await fetchSemrush(toolInput as unknown as Parameters<typeof fetchSemrush>[0])
-        );
-
-      case "fetch_llm_visibility": {
-        const result = await fetchLLMVisibility(
-          toolInput as unknown as Parameters<typeof fetchLLMVisibility>[0]
-        );
-        const llmCosts = result.costs ?? [];
-        const llmCost = llmCosts.reduce((s, c) => s + (c.cost_usd ?? 0), 0);
-        store.llmCostUsd = (store.llmCostUsd ?? 0) + llmCost;
-        sendEvent(res, {
-          type: "llm_cost",
-          costUsd: store.llmCostUsd,
-          llm_api_costs: llmCosts,
-        });
-        // Store per-query results for later injection into meta
-        if (result.query_results && Array.isArray(result.query_results)) {
-          store.llmQueryResults = result.query_results as { query: string; org: string; llm: string; mentioned: boolean; position?: number }[];
-        }
-        return JSON.stringify(result);
-      }
-
-      case "fetch_wikipedia": {
-        const result = await fetchWikipedia(toolInput as unknown as Parameters<typeof fetchWikipedia>[0]);
-        if (result.data && Array.isArray(result.data)) {
-          const map: Record<string, WikipediaInfo> = {};
-          for (const w of result.data as WikipediaInfo[]) {
-            if (w.found && w.org) map[w.org] = w;
-          }
-          if (Object.keys(map).length) store.wikiData = map;
-        }
-        return JSON.stringify(result);
-      }
-
-      case "fetch_comment_sentiment": {
-        const result = await fetchCommentSentiment(
-          toolInput as unknown as Parameters<typeof fetchCommentSentiment>[0]
-        );
-        if (result.data && Array.isArray(result.data)) {
-          store.commentSentiment = result.data as CommentSentimentResult[];
-        }
-        return JSON.stringify(result);
-      }
-
-      case "present_draft": {
-        const { meta: draftMeta, stats_json: draftStatsJson, summary } = toolInput as {
-          meta: ReportMeta;
-          stats_json: string;
-          summary: string;
-        };
-        // Persist in store so generate_report can use it on approval
-        try {
-          store.calcResult = JSON.parse(draftStatsJson) as ReturnType<typeof runCalculations>;
-          store.statsJson  = draftStatsJson;
-        } catch { /* keep existing */ }
-        store.meta = draftMeta;
-        store.reportSummary = summary;
-        // Emit draft_ready event — frontend renders the review panel
-        sendEvent(res, {
-          type: "draft_ready",
-          meta: draftMeta,
-          stats: store.calcResult,
-          stats_json: draftStatsJson,
-          summary,
-        });
-        return JSON.stringify({
-          success: true,
-          message: "Draft presented to the user. STOP here — wait for their explicit approval before calling generate_report.",
-        });
-      }
-
-      case "run_calculation": {
-        const rawInput = (toolInput as { raw_input: RawInput }).raw_input;
-        const calcResult = runCalculations(rawInput);
-        store.calcResult = calcResult;
-        store.statsJson = JSON.stringify(calcResult);
-        if (!calcResult.success) {
-          return JSON.stringify({
-            error: calcResult.error,
-            sanity_errors: calcResult.sanity_errors,
-          });
-        }
-        return JSON.stringify(calcResult);
-      }
-
-      case "generate_report": {
-        const { meta: rawMeta, stats_json } = toolInput as {
-          meta: ReportMeta;
-          stats_json: string;
-        };
-        // Inject the accumulated Claude cost and rich tool data from the store
-        // (Claude often only passes the basic meta fields; we need the store to
-        // preserve tone_evidence, comment_sentiment, youtube_channels, etc.)
-        const meta: ReportMeta = {
-          ...rawMeta,
-          claude_cost_usd: store.claudeCostUsd ?? rawMeta.claude_cost_usd ?? 0,
-          tone_evidence: rawMeta.tone_evidence ?? store.toneEvidence,
-          comment_sentiment: rawMeta.comment_sentiment ?? store.commentSentiment,
-          llm_query_results: rawMeta.llm_query_results ?? store.llmQueryResults,
-          youtube_channels: rawMeta.youtube_channels ?? store.youtubeChannels,
-          wiki_data: rawMeta.wiki_data ?? store.wikiData,
-        };
-        store.meta = meta;
-        let calcResult = store.calcResult;
-        if (!calcResult) {
-          try {
-            calcResult = JSON.parse(stats_json) as ReturnType<typeof runCalculations>;
-          } catch {
-            return JSON.stringify({ error: "Invalid stats_json" });
-          }
-        }
-        const html = generateHTMLReport(meta, calcResult, store.reportTemplate);
-        store.htmlReport = html;
-        store.statsJson = JSON.stringify(calcResult);
-        // Send a lightweight signal — frontend fetches the full HTML from the API
-        // after receiving the "done" event. Avoid sending 100-300KB in a single SSE frame.
-        sendEvent(res, { type: "report_ready", html_length: html.length });
-        return JSON.stringify({ success: true, html_length: html.length });
-      }
-
-      case "update_report_section": {
-        const { section, updated_stats_json, meta: claudeMeta } = toolInput as {
-          section: string;
-          updated_stats_json: string;
-          meta: ReportMeta;
-        };
-        let calcResult: ReturnType<typeof runCalculations>;
-        try {
-          calcResult = JSON.parse(updated_stats_json) as ReturnType<typeof runCalculations>;
-        } catch {
-          // If Claude didn't pass updated stats, use the stored ones
-          if (store.statsJson) {
-            try { calcResult = JSON.parse(store.statsJson) as ReturnType<typeof runCalculations>; }
-            catch { return JSON.stringify({ error: "Invalid updated_stats_json and no stored stats" }); }
-          } else {
-            return JSON.stringify({ error: "Invalid updated_stats_json" });
-          }
-        }
-        // Merge: use stored rich meta as the base, overlay only what Claude explicitly provided
-        // This preserves youtube_channels, tone_evidence, llm_query_results, comment_sentiment etc.
-        const richMeta: ReportMeta = {
-          ...(store.meta ?? {}),    // base: all previously stored rich data
-          ...claudeMeta,            // overlay: whatever Claude provided (orgs, date_range, etc.)
-          // Never let Claude drop the rich fields — keep stored versions if Claude omits them
-          youtube_channels:   claudeMeta?.youtube_channels   ?? store.meta?.youtube_channels,
-          tone_evidence:      claudeMeta?.tone_evidence      ?? store.meta?.tone_evidence,
-          llm_query_results:  claudeMeta?.llm_query_results  ?? store.meta?.llm_query_results,
-          comment_sentiment:  claudeMeta?.comment_sentiment  ?? store.meta?.comment_sentiment,
-          api_costs:          claudeMeta?.api_costs          ?? store.meta?.api_costs,
-          claude_cost_usd:    claudeMeta?.claude_cost_usd    ?? store.meta?.claude_cost_usd,
-        };
-        const html = generateHTMLReport(richMeta, calcResult, store.reportTemplate);
-        store.htmlReport = html;
-        store.meta = richMeta;
-        store.statsJson = JSON.stringify(calcResult);
-        sendEvent(res, { type: "report_ready", html_length: html.length });
-        sendEvent(res, { type: "section_complete", section });
-        return JSON.stringify({ success: true, section_updated: section });
-      }
-
-      default:
-        return JSON.stringify({ error: `Unknown tool: ${toolName}` });
-    }
-  } catch (err) {
-    logger.error({ err, toolName }, "Tool execution error");
-    return JSON.stringify({ error: String(err) });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main agent entry point
-// ---------------------------------------------------------------------------
-export async function runAgent(opts: AgentOptions): Promise<{
-  assistantText: string;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
-  statsJson?: string;
-  htmlReport?: string;
-  meta?: ReportMeta;
-  reportSummary?: string;
-  toolCallsJson?: string;
-}> {
-  const { conversationId, userMessage, history, res } = opts;
-
-  logger.info({ conversationId, userMessage }, "Agent started");
-
-  // Trim history to the last 6 messages to prevent unbounded context growth.
-  // Each extra history message is re-sent on every loop iteration — this is
-  // the primary driver of high session costs.
-  const MAX_HISTORY_MESSAGES = 6;
-  const trimmedHistory = history.slice(-MAX_HISTORY_MESSAGES);
-
-  const messages: Anthropic.MessageParam[] = [
-    ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
-    { role: "user" as const, content: userMessage },
-  ];
-
-  // Prompt caching: mark the system prompt and last tool as cacheable.
-  // After the first iteration the system prompt is cached and re-read at
-  // 10% of normal cost (~90% saving on system-prompt input tokens).
-  // Cast needed because the SDK's TS types don't yet expose cache_control on
-  // TextBlockParam, but the API accepts it.
-  const systemWithCache = [
-    { type: "text", text: getSystemPrompt(opts.reportSummary), cache_control: { type: "ephemeral" } },
-  ] as unknown as Anthropic.TextBlockParam[];
-  const toolsWithCache = TOOLS.map((t, i) =>
-    i === TOOLS.length - 1
-      ? ({ ...t, cache_control: { type: "ephemeral" } } as Anthropic.Tool)
-      : t
+export async function runAgent({
+  conversationId,
+  userMessage,
+  history,
+  res,
+  reportStatsJson,
+  reportMeta,
+  reportSummary,
+  reportTemplate,
+}: AgentOptions) {
+  logger.info(
+    { conversationId, userMessage },
+    "agent run start"
   );
+
+  const store: AgentState = {
+    meta: reportMeta ?? {
+      orgs: [],
+      date_range: { from: "", to: "" },
+      outlets: [],
+      llms: [],
+    },
+    statsJson: reportStatsJson ?? "",
+    htmlReport: "",
+    toolCalls: {},
+    toolCallsRecord: [],
+  };
+
+  // If reportMeta is provided but statsJson is empty, build an empty stats JSON
+  if (reportMeta && !reportStatsJson) {
+    const emptyStats = {
+      success: true,
+      social: [],
+      media: [],
+      aeo: [],
+      scorecards: [],
+      action_matrix: [],
+    };
+    store.statsJson = JSON.stringify(emptyStats);
+  }
+
+  // Helper: build tool execution
+  const executeTool = async (name: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    store.toolCalls[name] = (store.toolCalls[name] ?? 0) + 1;
+    logger.info({ tool: name, input }, "Tool call");
+
+    switch (name) {
+      case "fetch_serper": {
+        const result = await fetchSerper(input as any);
+        const returnObj: Record<string, unknown> = {
+          stub: result.stub,
+          data: result.data,
+          tone_evidence: (result as any).tone_evidence,
+          serper_requests: (result as any).serper_requests,
+        };
+        if ((result as any).data_quality) {
+          returnObj.data_quality = (result as any).data_quality;
+        }
+        return returnObj;
+      }
+      case "fetch_youtube": {
+        const result = await fetchYouTube(input as any);
+        return { stub: result.stub, data: result.data };
+      }
+      case "fetch_x_api": {
+        const result = await fetchXApi(input as any);
+        return { stub: result.stub, data: result.data };
+      }
+      case "fetch_instagram": {
+        const result = await fetchInstagram(input as any);
+        return { stub: result.stub, data: result.data };
+      }
+      case "fetch_linkedin": {
+        const result = await fetchLinkedIn(input as any);
+        return { stub: result.stub, data: result.data };
+      }
+      case "fetch_semrush": {
+        const result = await fetchSemrush(input as any);
+        return { stub: result.stub, data: result.data };
+      }
+      case "fetch_llm_visibility": {
+        const result = await fetchLLMVisibility(input as any);
+        return {
+          stub: result.stub,
+          data: result.data,
+          costs: result.costs,
+          query_results: result.query_results,
+        };
+      }
+      case "fetch_wikipedia": {
+        const result = await fetchWikipedia((input as any).orgs as string[]);
+        return { data: result.data };
+      }
+      case "fetch_comment_sentiment": {
+        const result = await fetchCommentSentiment((input as any).org_video_pairs as any);
+        return { data: result.data };
+      }
+      case "run_calculation": {
+        const raw = (input as any).raw_input as RawInput;
+        const result = runCalculations(raw);
+        store.statsJson = JSON.stringify(result);
+        return { stats: result };
+      }
+      case "present_draft": {
+        const meta = (input as any).meta as ReportMeta;
+        const statsJson = (input as any).stats_json as string;
+        const summary = (input as any).summary as string;
+
+        store.meta = meta;
+        store.statsJson = statsJson;
+        store.reportSummary = summary;
+
+        // Build a summary of the draft for the LLM to display
+        const stats = JSON.parse(statsJson) as {
+          success: boolean;
+          sanity_errors?: string[];
+          social?: any[];
+          media?: any[];
+          aeo?: any[];
+          scorecards?: any[];
+          action_matrix?: any[];
+        };
+
+        const socialLines = (stats.social ?? []).map(
+          (s: any) => `${s.org} · ${s.platform}: ${s.impressions?.toLocaleString()} impressions, ER ${s.er_pct}%`
+        );
+        const mediaLines = (stats.media ?? []).map(
+          (m: any) => `${m.org}: ${m.total_mentions} mentions, ${m.dofollow_links} dofollow, ${m.direct_cites} direct cites, ${m.aligned_tone_pct}% authoritative tone`
+        );
+        const aeoLines = (stats.aeo ?? []).map(
+          (a: any) => `${a.org} · ${a.llm}: ${a.mention_count}/20, avg pos ${a.avg_position}, citation ${a.citation_type}, tier ${a.visibility_tier}`
+        );
+        const scorecardLines = (stats.scorecards ?? []).map(
+          (sc: any) => `${sc.org}: ${sc.grade} (${sc.overall_score}/100) — Social ${sc.social_score} · Media ${sc.media_score} · AEO ${sc.aeo_score}`
+        );
+        const actionLines = (stats.action_matrix ?? []).slice(0, 4).map(
+          (a: any) => `${a.org} · ${a.priority}: ${a.action}`
+        );
+
+        const draft = `📝 **DRAFT — Review Before Generating Report**
+
+${summary}
+
+**Social Media:**
+${socialLines.length ? socialLines.join("\n") : "No social data"}
+
+**Media Coverage:**
+${mediaLines.length ? mediaLines.join("\n") : "No media data"}
+
+**AEO / LLM Visibility:**
+${aeoLines.length ? aeoLines.join("\n") : "No AEO data"}
+
+**Scorecards:**
+${scorecardLines.length ? scorecardLines.join("\n") : "No scorecards"}
+
+**Top Actions:**
+${actionLines.length ? actionLines.join("\n") : "No action matrix"}
+
+${stats.sanity_errors?.length ? `\n⚠️ **Sanity checks:**\n${stats.sanity_errors.join("\n")}` : ""}
+
+Type "generate" or "approve" to produce the final HTML report.`;
+
+        sendEvent(res, {
+          type: "draft",
+          content: draft,
+          meta: meta,
+          statsJson: statsJson,
+        });
+
+        return { success: true };
+      }
+      case "generate_report": {
+        const meta = (input as any).meta as ReportMeta;
+        const statsJson = (input as any).stats_json as string;
+        const stats = JSON.parse(statsJson) as any;
+
+        store.meta = meta;
+        store.statsJson = statsJson;
+
+        const html = generateHTMLReport(meta, stats, reportTemplate ?? undefined);
+        store.htmlReport = html;
+
+        // Build summary
+        const summary = buildReportSummary(meta, stats);
+        store.reportSummary = summary;
+
+        sendEvent(res, {
+          type: "report",
+          html,
+          summary,
+          meta: meta,
+          statsJson: statsJson,
+        });
+
+        return { success: true, html, summary };
+      }
+      case "update_report_section": {
+        const meta = (input as any).meta as ReportMeta;
+        const statsJson = (input as any).stats_json as string;
+        const section = (input as any).section as string;
+        const stats = JSON.parse(statsJson) as any;
+
+        const html = generateHTMLReport(meta, stats, reportTemplate ?? undefined);
+        store.htmlReport = html;
+
+        sendEvent(res, {
+          type: "report",
+          html,
+          meta: meta,
+          statsJson: statsJson,
+        });
+
+        return { success: true, html };
+      }
+      default:
+        return { error: "Unknown tool" };
+    }
+  };
+
+  // Build messages
+  const systemPrompt = getSystemPrompt(reportSummary);
+  const messages: Anthropic.MessageParam[] = [
+    ...history.map(
+      (h): Anthropic.MessageParam => ({
+        role: h.role,
+        content: h.content,
+      })
+    ),
+    { role: "user", content: userMessage },
+  ];
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheWriteTokens = 0;
   let totalCacheReadTokens = 0;
+
+  const MAX_ITERATIONS = 8;
+  let iterMessages = messages;
   let assistantText = "";
-  // Pre-seed store with persisted meta so update_report_section can use the rich data
-  const store: ToolResultStore = {
-    meta: opts.reportMeta ?? undefined,
-    statsJson: opts.reportStatsJson ?? undefined,
-    reportTemplate: opts.reportTemplate ?? undefined,
-  };
-  const toolCallsRecord: Array<{ tool: string; input: unknown; output: unknown }> = [];
-
-  let iterMessages = [...messages];
   let iterations = 0;
-  const MAX_ITERATIONS = 12;
 
-  while (iterations < MAX_ITERATIONS) {
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
     iterations++;
-    logger.info({ iteration: iterations }, "Agent loop");
-
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      system: systemWithCache,
-      tools: toolsWithCache,
+      system: systemPrompt,
       messages: iterMessages,
+      tools: TOOLS,
+      tool_choice: { type: "auto" },
     });
 
-    const usage = response.usage as typeof response.usage & {
-      cache_creation_input_tokens?: number;
-      cache_read_input_tokens?: number;
-    };
-    totalInputTokens       += usage.input_tokens;
-    totalOutputTokens      += usage.output_tokens;
-    totalCacheWriteTokens  += usage.cache_creation_input_tokens ?? 0;
-    totalCacheReadTokens   += usage.cache_read_input_tokens     ?? 0;
+    totalInputTokens += response.usage.input_tokens;
+    totalOutputTokens += response.usage.output_tokens;
+    totalCacheWriteTokens += (response.usage as any).cache_creation_input_tokens ?? 0;
+    totalCacheReadTokens += (response.usage as any).cache_read_input_tokens ?? 0;
 
-    const currentCost = calcCost(
-      totalInputTokens,
-      totalOutputTokens,
-      totalCacheWriteTokens,
-      totalCacheReadTokens,
+    const toolBlocks = response.content.filter(
+      (c): c is Anthropic.ToolUseBlock => c.type === "tool_use"
     );
-    store.claudeCostUsd = currentCost;
+    const textBlocks = response.content.filter(
+      (c): c is Anthropic.TextBlock => c.type === "text"
+    );
 
-    sendEvent(res, {
-      type: "cost",
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      cacheWriteTokens: totalCacheWriteTokens,
-      cacheReadTokens: totalCacheReadTokens,
-      costUsd: currentCost,
-    });
-
-    const toolUseBlocks: Anthropic.ToolUseBlock[] = [];
-
-    for (const block of response.content) {
-      if (block.type === "text") {
-        assistantText += block.text;
-        sendEvent(res, { type: "text", content: block.text });
-      } else if (block.type === "tool_use") {
-        toolUseBlocks.push(block);
-      }
-    }
-
-    if (response.stop_reason === "end_turn" || toolUseBlocks.length === 0) {
+    // If no tools, we are done
+    if (!toolBlocks.length) {
+      assistantText = textBlocks.map((t) => t.text).join("");
       break;
     }
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-    for (const toolBlock of toolUseBlocks) {
-      const label = TOOL_LABELS[toolBlock.name] ?? `Running ${toolBlock.name}...`;
-      sendEvent(res, { type: "tool_start", tool: toolBlock.name, label });
-
-      const output = await executeTool(
-        toolBlock.name,
-        toolBlock.input as Record<string, unknown>,
-        store,
-        res
-      );
-
-      sendEvent(res, { type: "tool_done", tool: toolBlock.name });
-      toolCallsRecord.push({
-        tool: toolBlock.name,
-        input: toolBlock.input,
-        output: JSON.parse(output),
-      });
-
-      // Truncate large tool outputs before appending to the context window.
-      // Claude only needs summary-level data; full payloads are used by the
-      // generator functions directly. Cap at 6 000 chars (~1 500 tokens).
-      const MAX_TOOL_RESULT_CHARS = 6_000;
-      const contextOutput =
-        output.length > MAX_TOOL_RESULT_CHARS
-          ? output.slice(0, MAX_TOOL_RESULT_CHARS) + '…[truncated — full data used by generator]'
-          : output;
-
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: toolBlock.id,
-        content: contextOutput,
-      });
+    // If there are text blocks and tools, stream the text first
+    if (textBlocks.length) {
+      const text = textBlocks.map((t) => t.text).join("");
+      if (text.trim()) {
+        sendEvent(res, { type: "text", content: text });
+      }
     }
+
+    // Execute all tool calls in parallel
+    const toolResults: {
+      type: "tool_result";
+      tool_use_id: string;
+      content: string;
+    }[] = [];
+
+    await Promise.all(
+      toolBlocks.map(async (toolBlock) => {
+        const toolInput = toolBlock.input as Record<string, unknown>;
+        const output = await executeTool(toolBlock.name, toolInput);
+        const outputStr = JSON.stringify(output);
+
+        store.toolCallsRecord.push({
+          tool: toolBlock.name,
+          input: toolInput,
+          output: JSON.parse(outputStr),
+        });
+
+        // Truncate large tool outputs before appending to the context window
+        const MAX_TOOL_RESULT_CHARS = 6_000;
+        const contextOutput =
+          outputStr.length > MAX_TOOL_RESULT_CHARS
+            ? outputStr.slice(0, MAX_TOOL_RESULT_CHARS) + "…[truncated — full data used by generator]"
+            : outputStr;
+
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: toolBlock.id,
+          content: contextOutput,
+        });
+      })
+    );
 
     iterMessages = [
       ...iterMessages,
@@ -861,6 +830,34 @@ export async function runAgent(opts: AgentOptions): Promise<{
     meta: store.meta,
     reportSummary: store.reportSummary,
     toolCallsJson:
-      toolCallsRecord.length > 0 ? JSON.stringify(toolCallsRecord) : undefined,
+      store.toolCallsRecord.length > 0 ? JSON.stringify(store.toolCallsRecord) : undefined,
   };
+}
+
+function buildReportSummary(meta: ReportMeta, stats: any): string {
+  const orgs = meta.orgs.join(", ");
+  const dateRange = `${meta.date_range.from} to ${meta.date_range.to}`;
+  const outlets = meta.outlets.join(", ");
+  const llms = meta.llms.join(", ");
+
+  const social = (stats.social ?? []).map(
+    (s: any) => `${s.org} ${s.platform}: ${s.impressions} impressions, ER ${s.er_pct}%`
+  );
+  const media = (stats.media ?? []).map(
+    (m: any) => `${m.org}: ${m.total_mentions} mentions, ${m.dofollow_links} dofollow, ${m.direct_cites} direct cites`
+  );
+  const aeo = (stats.aeo ?? []).map(
+    (a: any) => `${a.org} ${a.llm}: ${a.mention_count}/20, pos ${a.avg_position}, ${a.citation_type}, ${a.visibility_tier}`
+  );
+  const scorecards = (stats.scorecards ?? []).map(
+    (sc: any) => `${sc.org}: ${sc.grade} (${sc.overall_score}/100)`
+  );
+
+  return `Air Quality Media Intelligence Report for ${orgs} (${dateRange}).
+Outlets: ${outlets}. LLMs: ${llms}.
+
+Social: ${social.join("; ")}
+Media: ${media.join("; ")}
+AEO: ${aeo.join("; ")}
+Scorecards: ${scorecards.join("; ")}`;
 }

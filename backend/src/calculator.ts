@@ -73,16 +73,20 @@ export interface SocialStats {
   shares: number;
   comments: number;
   saves: number;
+  quote_rt: number;
 }
 
 export interface MediaStats {
   org: string;
   total_mentions: number;
   dofollow_links: number;
+  nofollow_links: number;
   direct_cites: number;
   /** % of outlet rows where tone = "Authoritative" (org cited as primary expert) */
   aligned_tone_pct: number;
   top_outlets: { outlet: string; mentions: number }[];
+  /** Per-outlet breakdown: outlet → { mentions, dofollow, nofollow, direct_cites, tone } */
+  outlet_breakdown: { outlet: string; mentions: number; dofollow: number; nofollow: number; direct_cites: number; tone: "A" | "N" }[];
 }
 
 export interface AeoStats {
@@ -140,6 +144,7 @@ export function runCalculations(input: RawInput): CalcResult {
       shares: s.shares,
       comments: s.comments,
       saves: s.saves,
+      quote_rt: s.quote_rt,
     };
   });
 
@@ -161,12 +166,23 @@ export function runCalculations(input: RawInput): CalcResult {
         ? parseFloat(((authoritative / rows.length) * 100).toFixed(1))
         : 0;
 
+    const nofollow_links = rows.reduce((s, r) => s + Math.max(0, r.mentions - r.dofollow), 0);
+
     const top_outlets = [...rows]
       .sort((a, b) => b.mentions - a.mentions)
       .slice(0, 5)
       .map((r) => ({ outlet: r.outlet, mentions: r.mentions }));
 
-    return { org, total_mentions, dofollow_links, direct_cites, aligned_tone_pct, top_outlets };
+    const outlet_breakdown = rows.map((r) => ({
+      outlet: r.outlet,
+      mentions: r.mentions,
+      dofollow: r.dofollow,
+      nofollow: Math.max(0, r.mentions - r.dofollow),
+      direct_cites: r.direct_cites,
+      tone: r.tone,
+    }));
+
+    return { org, total_mentions, dofollow_links, nofollow_links, direct_cites, aligned_tone_pct, top_outlets, outlet_breakdown };
   });
 
   // --- AEO ---

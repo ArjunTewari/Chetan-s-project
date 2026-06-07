@@ -142,27 +142,43 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
     </div>`;
   }).join("");
 
-  // Comment Sentiment section
+  // Comment Sentiment section — visual cards + table
   const sentimentData = meta.comment_sentiment ?? [];
-  const sentimentRows = sentimentData.map((s) => {
+  const sentimentCards = sentimentData.map((s) => {
     const total = s.total_relevant > 0 ? s.total_relevant : 1;
     const posPct = Math.round((s.positive / total) * 100);
     const neuPct = Math.round((s.neutral  / total) * 100);
     const negPct = Math.round((s.negative / total) * 100);
-    const negClass = s.negative > s.positive && s.negative > s.neutral ? "bad" : s.negative > 0 ? "warn" : "";
     const topicsDisplay = s.negative_topics?.length
-      ? s.negative_topics.map((t) => `<span style="display:inline-block;background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.2);border-radius:4px;padding:1px 6px;font-size:11px;margin:1px">${t}</span>`).join(" ")
-      : `<span style="color:var(--text-muted);font-size:11px">—</span>`;
+      ? s.negative_topics.map((t) => `<span style="display:inline-block;background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.2);border-radius:4px;padding:2px 8px;font-size:11px;margin:2px">${t}</span>`).join(" ")
+      : `<span style="color:var(--text-muted);font-size:11px">No recurring negative themes</span>`;
     return `
-      <tr>
-        <td><strong>${s.org}</strong></td>
-        <td class="good">${s.positive}<span style="color:var(--text-muted);font-weight:400;margin-left:5px">(${posPct}%)</span></td>
-        <td style="color:var(--text-muted)">${s.neutral}<span style="margin-left:5px">(${neuPct}%)</span></td>
-        <td class="${negClass}">${s.negative}<span style="color:var(--text-muted);font-weight:400;margin-left:5px">(${negPct}%)</span></td>
-        <td style="color:var(--text-muted)">${s.total_relevant} <span style="font-size:11px">/ ${s.total_fetched} fetched</span></td>
-        <td>${topicsDisplay}</td>
-        <td style="font-style:italic;color:var(--text-muted);font-size:12px;max-width:280px">${s.verdict}</td>
-      </tr>`;
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:14px">
+      <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:700;margin-bottom:18px">${s.org}</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px">
+        <div style="text-align:center;min-width:90px">
+          <div style="font-family:'Syne',sans-serif;font-size:36px;font-weight:800;color:var(--good)">${posPct}%</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em">Positive</div>
+          <div style="font-size:12px;color:var(--text-muted)">${s.positive} comments</div>
+        </div>
+        <div style="text-align:center;min-width:90px">
+          <div style="font-family:'Syne',sans-serif;font-size:36px;font-weight:800;color:var(--text-muted)">${neuPct}%</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em">Neutral</div>
+          <div style="font-size:12px;color:var(--text-muted)">${s.neutral} comments</div>
+        </div>
+        <div style="text-align:center;min-width:90px">
+          <div style="font-family:'Syne',sans-serif;font-size:36px;font-weight:800;color:var(--bad)">${negPct}%</div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em">Negative</div>
+          <div style="font-size:12px;color:var(--text-muted)">${s.negative} comments</div>
+        </div>
+        <div style="flex:1;min-width:200px;display:flex;flex-direction:column;justify-content:center">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);margin-bottom:6px">Negative spike topics</div>
+          <div>${topicsDisplay}</div>
+          ${s.verdict ? `<div style="margin-top:10px;font-size:12px;font-style:italic;color:var(--text-muted)">${s.verdict}</div>` : ""}
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">${s.total_relevant} relevant / ${s.total_fetched} fetched from top 5 videos · GPT-4o-mini classification</div>
+    </div>`;
   }).join("");
 
   // ── Wikipedia context section ────────────────────────────────────────────
@@ -204,57 +220,90 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
     "linkedin":          "6.5%",
   };
 
-  const socialRows = stats.social.map((s) => {
-    const benchmark = ER_BENCHMARKS[s.platform.toLowerCase()] ?? "—";
-    const vs = benchmark !== "—"
-      ? (s.er_pct >= parseFloat(benchmark) ? `<span class="good">▲</span>` : `<span class="warn">▼</span>`)
-      : "—";
-    return `
-      <tr>
-        <td>${s.org}</td><td>${s.platform}</td>
-        <td>${(s.impressions ?? 0).toLocaleString()}</td>
-        <td>${(s.total_engagement ?? 0).toLocaleString()}</td>
-        <td class="highlight">${s.er_pct ?? 0}%</td>
-        <td style="color:var(--text-muted);font-size:12px">${benchmark}</td>
-        <td>${vs}</td>
-        <td>${(s.likes ?? 0).toLocaleString()}</td>
-        <td>${(s.shares ?? 0) > 0 ? (s.shares ?? 0).toLocaleString() : "—"}</td>
-        <td>${(s.comments ?? 0).toLocaleString()}</td>
-        <td>${(s.saves ?? 0) > 0 ? (s.saves ?? 0).toLocaleString() : "—"}</td>
-      </tr>`;
-  }).join("");
-
-  // Instagram / LinkedIn placeholders (handles not yet connected)
-  const knownPlatformsPerOrg: Record<string, Set<string>> = {};
+  // Group social rows by org so we can rowspan the org cell
+  const socialRowsByOrg: Record<string, any[]> = {};
   for (const s of stats.social) {
-    if (!knownPlatformsPerOrg[s.org]) knownPlatformsPerOrg[s.org] = new Set();
-    knownPlatformsPerOrg[s.org].add(s.platform.toLowerCase());
+    (socialRowsByOrg[s.org] = socialRowsByOrg[s.org] || []).push(s);
   }
-  const placeholderRows = meta.orgs.map((org) => {
-    const known = knownPlatformsPerOrg[org] ?? new Set();
-    const rows: string[] = [];
-    for (const [p, bm] of [["Instagram", "0.56%"], ["LinkedIn", "6.5%"]] as const) {
-      if (!known.has(p.toLowerCase())) {
-        rows.push(`
-          <tr style="opacity:0.45">
-            <td>${org}</td><td>${p} <span style="font-size:10px;color:var(--text-muted)">(handle not confirmed)</span></td>
-            <td>—</td><td>—</td><td>—</td><td style="font-size:12px;color:var(--text-muted)">${bm}</td><td>—</td>
-            <td>—</td><td>—</td><td>—</td><td>—</td>
-          </tr>`);
+
+  const ER_BM = ER_BENCHMARKS;
+
+  const socialRows = meta.orgs.flatMap((org) => {
+    const rows: any[] = socialRowsByOrg[org] ?? [];
+    const known = new Set(rows.map((s: any) => s.platform.toLowerCase()));
+    const placeholderPlatforms = ['Instagram','LinkedIn'].filter(p => !known.has(p.toLowerCase()));
+    const allRows = [...rows.map((s: any) => ({ ...s, isPlaceholder: false })), ...placeholderPlatforms.map(p => ({ org, platform: p, impressions:0, likes:0, shares:0, comments:0, saves:0, quote_rt:0, er_pct:0, isPlaceholder: true }))];
+    const totalRows = allRows.length;
+    return allRows.map((s: any, i: number) => {
+      const orgCell = i === 0 ? `<td rowspan="${totalRows}">${s.org}</td>` : '';
+      if (s.isPlaceholder) {
+        const bm = ER_BM[s.platform.toLowerCase()] ?? '—';
+        return `<tr style="opacity:0.45">${orgCell}<td>${s.platform} <span style="font-size:10px;color:var(--text-muted)">(handle not confirmed)</span></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td style="font-size:12px;color:var(--text-muted)">${bm}</td><td>—</td></tr>`;
       }
+      const bm = ER_BM[s.platform.toLowerCase()] ?? '—';
+      const vs = bm !== '—' ? (s.er_pct >= parseFloat(bm) ? `<span class="good">▲</span>` : `<span class="warn">▼</span>`) : '—';
+      const isYT = s.platform.toLowerCase().includes('youtube');
+      const quoteRt = s.quote_rt ?? 0;
+      return `<tr>${orgCell}
+        <td>${s.platform}</td>
+        <td class="highlight">${(s.impressions ?? 0).toLocaleString()}</td>
+        <td style="color:var(--text-muted)">${isYT ? (s.impressions ?? 0).toLocaleString() : '—'}</td>
+        <td>${(s.likes ?? 0).toLocaleString()}</td>
+        <td>${(s.shares ?? 0) > 0 ? (s.shares ?? 0).toLocaleString() : '—'}</td>
+        <td>${(s.comments ?? 0).toLocaleString()}</td>
+        <td>${(s.saves ?? 0) > 0 ? (s.saves ?? 0).toLocaleString() : '—'}</td>
+        <td>${quoteRt > 0 ? quoteRt.toLocaleString() : '—'}</td>
+        <td class="highlight">${s.er_pct ?? 0}%</td>
+        <td style="color:var(--text-muted);font-size:12px">${bm}</td>
+        <td>${vs}</td>
+      </tr>`;
+    });
+  }).join('');
+
+  // Placeholder rows are now embedded in socialRowsByOrg grouping above
+
+  // ── Media rows — outlet-by-outlet matrix ────────────────────────────────────
+  // Build the full outlet list from all orgs' outlet_breakdown
+  const allOutlets: string[] = [];
+  for (const m of stats.media) {
+    for (const ob of m.outlet_breakdown ?? []) {
+      if (!allOutlets.includes(ob.outlet)) allOutlets.push(ob.outlet);
     }
-    return rows.join("");
+  }
+  // Fall back to meta.outlets if breakdown is missing
+  const matrixOutlets = allOutlets.length > 0 ? allOutlets : (meta.outlets ?? []);
+
+  const mediaMatrixRows = stats.media.map((m: any) => {
+    const byOutlet: Record<string,any> = {};
+    for (const ob of m.outlet_breakdown ?? []) byOutlet[ob.outlet] = ob;
+    const outletCells = matrixOutlets.map((outlet) => {
+      const ob = byOutlet[outlet];
+      if (!ob || ob.mentions === 0) {
+        return `<td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td>`;
+      }
+      const toneBadge = ob.tone === "A"
+        ? `<span class="badge tone-auth">A</span>`
+        : `<span class="badge tone-neutral">N</span>`;
+      return `<td class="highlight">${ob.mentions}</td><td>${ob.dofollow}</td><td>${ob.direct_cites}</td><td>${toneBadge}</td>`;
+    }).join("");
+    const totalsCell = `<td style="font-size:12px;color:var(--text-muted);white-space:nowrap">${m.total_mentions} | Do:${m.dofollow_links} | No:${m.nofollow_links} | DC:${m.direct_cites}</td>`;
+    return `<tr><td><strong>${m.org}</strong></td>${outletCells}${totalsCell}</tr>`;
   }).join("");
 
-  // ── Media rows ──────────────────────────────────────────────────────────────
+  // Build matrix header
+  const outletGroupHeaders = matrixOutlets.map((o) => `<th colspan="4" class="th-group">${o}</th>`).join("");
+  const outletSubHeaders   = matrixOutlets.map(() => `<th>Mentions</th><th>Dofollow</th><th>Direct Cites</th><th>Tone</th>`).join("");
+
+  // Summary rows (existing aggregated view — kept below matrix for quick scan)
   const mediaRows = stats.media.map((m) => `
       <tr>
         <td>${m.org}</td>
         <td>${m.total_mentions}</td>
         <td>${m.dofollow_links}</td>
+        <td>${m.nofollow_links}</td>
         <td>${m.direct_cites}</td>
         <td class="${m.aligned_tone_pct >= 60 ? "good" : "warn"}">${m.aligned_tone_pct}%</td>
-        <td>${m.top_outlets.map((o) => `${o.outlet} (${o.mentions})`).join(", ")}</td>
+        <td>${m.top_outlets.map((o: any) => `${o.outlet} (${o.mentions})`).join(", ")}</td>
       </tr>`).join("");
 
   // ── Journalist Tone Evidence ────────────────────────────────────────────────
@@ -268,13 +317,33 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
         <td style="color:var(--text-muted);font-size:12px">${t.article_date}</td>
       </tr>`).join("");
 
-  // ── AEO rows — X/20 format + visibility tier ────────────────────────────────
-  const aeoRows = stats.aeo.map((a) => {
-    const mentionDisplay = `${a.mention_count}/20 (${a.mention_rate_pct}%)`;
-    const tierClass = a.visibility_tier === "High" ? "tier-high" : a.visibility_tier === "Moderate" ? "tier-moderate" : "tier-low";
+  // Build per-org tone summary from outlet_breakdown in stats.media
+  const orgToneSummaries = stats.media.map((m) => {
+    const authOutlets  = (m.outlet_breakdown ?? []).filter((ob: any) => ob.tone === "A" && ob.mentions > 0).map((ob: any) => ob.outlet);
+    const neutralOutlets = (m.outlet_breakdown ?? []).filter((ob: any) => ob.tone === "N" && ob.mentions > 0).map((ob: any) => ob.outlet);
+    const authStr    = authOutlets.length  > 0 ? `<span class="good">Authoritative</span> — ${authOutlets.join(" · ")}` : "";
+    const neutralStr = neutralOutlets.length > 0 ? `<span style="color:var(--text-muted)">Neutral</span> — ${neutralOutlets.join(" · ")}` : "";
     return `
-      <tr>
-        <td>${a.org}</td><td>${a.llm}</td>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:14px">
+      <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;margin-bottom:10px">${m.org}</div>
+      <div style="font-family:'Inter',sans-serif;font-size:13px;line-height:2">${[authStr, neutralStr].filter(Boolean).join("<br>")}</div>
+      <div style="margin-top:12px;font-family:'Inter',sans-serif;font-size:12px;color:var(--text-muted)">
+        ${m.total_mentions} mentions &nbsp;·&nbsp; Dofollow ${m.dofollow_links} &nbsp;·&nbsp; Nofollow ${m.nofollow_links} &nbsp;·&nbsp; Direct citations ${m.direct_cites}
+      </div>
+    </div>`;
+  }).join("");
+
+  // ── AEO rows — rowspan org name, X/20 format + visibility tier ──────────────
+  const aeoByOrg: Record<string, typeof stats.aeo> = {};
+  for (const a of stats.aeo) (aeoByOrg[a.org] = aeoByOrg[a.org] || []).push(a);
+  const aeoRows = meta.orgs.flatMap((org) => {
+    const rows = aeoByOrg[org] ?? [];
+    return rows.map((a, i) => {
+      const orgCell = i === 0 ? `<td rowspan="${rows.length}">${a.org}</td>` : '';
+      const mentionDisplay = `${a.mention_count}/20 (${a.mention_rate_pct}%)`;
+      const tierClass = a.visibility_tier === "High" ? "tier-high" : a.visibility_tier === "Moderate" ? "tier-moderate" : "tier-low";
+      return `<tr>${orgCell}
+        <td>${a.llm}</td>
         <td class="highlight">${mentionDisplay}</td>
         <td>${a.avg_position > 0 ? a.avg_position : "—"}</td>
         <td>${a.citation_type}</td>
@@ -282,6 +351,7 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
         <td>${a.visibility_score}/100</td>
         <td><span class="badge ${tierClass}">${a.visibility_tier}</span></td>
       </tr>`;
+    });
   }).join("");
 
   // ── Sample Query Performance table ─────────────────────────────────────────
@@ -297,7 +367,12 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
       if (!r) return `<td style="color:var(--text-muted)">—</td>`;
       if (!r.mentioned) return `<td style="color:var(--bad)">✗</td>`;
       const pos = r.position != null ? ` #${r.position}` : "";
-      return `<td class="good">✓${pos}</td>`;
+      // For Perplexity: check if there's a direct link indicator
+      const isPerplexity = llm.toLowerCase().includes("perplexity");
+      const linkBadge = isPerplexity && r.mentioned
+        ? ` <span style="font-size:9px;color:var(--emerald);border:1px solid rgba(0,179,126,0.4);border-radius:3px;padding:0 3px">link</span>`
+        : "";
+      return `<td class="good">✓${pos}${linkBadge}</td>`;
     }).join("");
     return `<tr><td style="font-size:12px;max-width:300px">${query}</td>${cells}</tr>`;
   }).join("");
@@ -319,24 +394,50 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
         </div>
       </div>`).join("");
 
-  // ── Action Matrix — 4 categories ───────────────────────────────────────────
+  // ── Action Matrix — rowspan org name ────────────────────────────────────────
   const ACTION_META: Record<string, { css: string; emoji: string; label: string }> = {
     "Fix Now":  { css: "fix-now",  emoji: "🟠", label: "Fix Now — act this week" },
     "Leverage": { css: "leverage", emoji: "🟢", label: "Leverage — double down" },
     "Optimise": { css: "optimise", emoji: "🔵", label: "Optimise — 4–8 weeks" },
     "Invest":   { css: "invest",   emoji: "🔴", label: "Invest — platform gap" },
   };
-  const actionRows = stats.action_matrix.map((a) => {
-    const m = ACTION_META[a.priority] ?? { css: "fix-now", emoji: "⚪", label: a.priority };
-    return `
-      <tr>
-        <td>${a.org}</td>
-        <td><span class="badge action-${m.css}">${m.emoji} ${a.priority}</span></td>
+
+  const actionByOrg: Record<string, typeof stats.action_matrix> = {};
+  for (const a of stats.action_matrix) (actionByOrg[a.org] = actionByOrg[a.org] || []).push(a);
+  const actionRows = meta.orgs.flatMap((org) => {
+    const rows = actionByOrg[org] ?? [];
+    return rows.map((a, i) => {
+      const orgCell = i === 0 ? `<td rowspan="${rows.length}">${a.org}</td>` : '';
+      const meta = ACTION_META[a.priority];
+      return `<tr>${orgCell}
+        <td><span class="badge action-${meta.css}">${meta.emoji} ${meta.label}</span></td>
         <td>${a.area}</td>
         <td>${a.action}</td>
-        <td style="font-size:12px;color:var(--text-muted)">${a.rationale}</td>
+        <td>${a.rationale}</td>
       </tr>`;
+    });
   }).join("");
+
+  // ── Stub badges ─────────────────────────────────────────────────────────────
+  const stubBadges = [];
+  if (meta.api_costs?.some((c) => c.service === "ChatGPT" && c.requests === 0)) {
+    stubBadges.push(`<span class="source-badge source-stub">● ChatGPT data stub</span>`);
+  }
+  // ...add more stub badges as needed
+  const stubBadgesHtml = stubBadges.length ? `<div style="margin-bottom:10px">${stubBadges.join(" ")}</div>` : "";
+
+  // ── Comment Sentiment section ─────────────────────────────────────────────
+  const commentSentimentSection = isEnabled("comment_sentiment") && sentimentData.length > 0 ? `
+<div id="comment-sentiment" class="section">
+  <h2 class="section-title">${getTitle("comment_sentiment","Comment Sentiment")}
+    <span class="source-badge source-real" style="background:rgba(0,179,126,0.1);color:var(--good);border-color:rgba(0,179,126,0.25)">● GPT-4o-mini</span>
+  </h2>
+  <p class="section-desc">${getDesc("comment_sentiment","YouTube comment sentiment analysis via GPT-4o-mini. Classified as Positive, Neutral, or Negative toward each organisation.")}</p>
+  ${sentimentCards}
+</div>` : "";
+
+  // ── Client badge ────────────────────────────────────────────────────────────
+  const clientBadge = clientName ? `<span class="client-badge">${clientName}</span>` : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -344,310 +445,182 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
 <style>
-  :root {
-    --emerald: #00b37e; --emerald-dark: #007a55;
-    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
-    --border: #30363d; --text: #e6edf3; --text-muted: #8b949e;
-    --good: #3fb950; --warn: #d29922; --bad: #f85149;
-    --grade-a:#3fb950; --grade-b:#79c0ff; --grade-c:#d29922; --grade-d:#ffa657; --grade-f:#f85149;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
-
-  /* Cover */
-  .cover { background: linear-gradient(135deg,#0d1117 0%,#0a2e1e 55%,#0d1117 100%); padding: 72px 48px 56px; border-bottom: 1px solid var(--border); position:relative; }
-  .confidential-badge { position:absolute; top:24px; right:48px; background:rgba(248,81,73,0.12); border:1px solid rgba(248,81,73,0.3); color:var(--bad); font-family:'Inter',sans-serif; font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; padding:4px 12px; border-radius:20px; }
-  .cover-logo { font-family:'Inter',sans-serif; font-size:11px; font-weight:600; letter-spacing:0.18em; color:var(--emerald); text-transform:uppercase; margin-bottom:36px; opacity:0.9; }
-  .cover-title { font-family:'Syne',sans-serif; font-size:42px; font-weight:800; line-height:1.1; margin-bottom:14px; background:linear-gradient(100deg,#ffffff 30%,var(--emerald)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; letter-spacing:-0.02em; }
-  .cover-subtitle { font-family:'Inter',sans-serif; font-size:15px; font-weight:400; color:var(--text-muted); margin-bottom:32px; letter-spacing:0.01em; }
-  .cover-meta { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; }
-  .cover-meta-item { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:14px 18px; backdrop-filter:blur(4px); }
-  .cover-meta-label { font-family:'Inter',sans-serif; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.12em; color:var(--text-muted); }
-  .cover-meta-value { font-family:'Inter',sans-serif; font-size:13px; font-weight:600; margin-top:5px; color:var(--text); }
-  .cover-benchmarks { margin-top:24px; font-family:'Inter',sans-serif; font-size:11px; color:var(--text-muted); }
-  .cover-benchmarks strong { color:#c9d1d9; }
-
-  /* Nav */
-  .nav { background:rgba(22,27,34,0.95); border-bottom:1px solid var(--border); padding:0 48px; position:sticky; top:0; z-index:100; display:flex; gap:0; overflow-x:auto; backdrop-filter:blur(8px); }
-  .nav a { display:block; padding:14px 16px; color:var(--text-muted); text-decoration:none; font-family:'Inter',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.02em; white-space:nowrap; border-bottom:2px solid transparent; transition:all 0.2s; }
-  .nav a:hover { color:var(--emerald); border-bottom-color:var(--emerald); }
-
-  /* Sections */
-  .section { padding:48px; border-bottom:1px solid var(--border); }
-  .section-title { font-family:'Syne',sans-serif; font-size:20px; font-weight:700; letter-spacing:-0.01em; margin-bottom:6px; display:flex; align-items:center; gap:12px; }
-  .section-title::before { content:''; display:inline-block; width:3px; height:22px; background:var(--emerald); border-radius:2px; flex-shrink:0; }
-  .section-desc { font-family:'Inter',sans-serif; color:var(--text-muted); margin-bottom:28px; font-size:13px; }
-  .subsection-title { font-family:'Syne',sans-serif; font-size:16px; font-weight:700; margin-bottom:8px; display:flex; align-items:center; gap:10px; }
-
-  /* Tables */
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th { background:var(--surface2); padding:11px 14px; text-align:left; font-family:'Inter',sans-serif; font-weight:600; font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted); border-bottom:1px solid var(--border); }
-  .th-group { background:rgba(0,179,126,0.06); color:var(--emerald); font-size:9px; text-align:center; border-bottom:1px solid var(--border); padding:6px 14px; }
-  td { padding:11px 14px; border-bottom:1px solid var(--border); vertical-align:top; font-family:'Inter',sans-serif; font-size:13px; }
-  tr:hover td { background:rgba(255,255,255,0.02); }
-  .highlight { color:var(--emerald); font-weight:600; }
-  .good { color:var(--good); font-weight:600; }
-  .warn { color:var(--warn); font-weight:600; }
-  .bad { color:var(--bad); }
-
-  /* Scorecards */
-  .scorecards-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
-  .scorecard-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:28px 24px; text-align:center; }
-  .sc-org { font-family:'Inter',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:14px; text-transform:uppercase; }
-  .sc-grade { font-family:'Syne',sans-serif; font-size:60px; font-weight:800; line-height:1; margin-bottom:6px; }
-  .sc-overall { font-family:'Inter',sans-serif; font-size:18px; font-weight:700; margin-bottom:14px; }
-  .sc-breakdown { display:flex; flex-direction:column; gap:4px; font-family:'Inter',sans-serif; font-size:12px; color:var(--text-muted); }
-  .grade-a .sc-grade{color:var(--grade-a)} .grade-b .sc-grade{color:var(--grade-b)} .grade-c .sc-grade{color:var(--grade-c)} .grade-d .sc-grade{color:var(--grade-d)} .grade-f .sc-grade{color:var(--grade-f)}
-
-  /* Badges */
-  .badge { display:inline-block; padding:3px 9px; border-radius:20px; font-family:'Inter',sans-serif; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; }
-  /* Action priority badges */
-  .action-fix-now  { background:rgba(255,140,0,0.12); color:#ffa657; border:1px solid rgba(255,140,0,0.25); }
-  .action-leverage { background:rgba(63,185,80,0.12);  color:#3fb950; border:1px solid rgba(63,185,80,0.25); }
-  .action-optimise { background:rgba(121,192,255,0.12); color:#79c0ff; border:1px solid rgba(121,192,255,0.25); }
-  .action-invest   { background:rgba(248,81,73,0.12);  color:#f85149; border:1px solid rgba(248,81,73,0.2); }
-  /* Visibility tier badges */
-  .tier-high     { background:rgba(63,185,80,0.12);   color:#3fb950; border:1px solid rgba(63,185,80,0.25); }
-  .tier-moderate { background:rgba(210,153,34,0.12);  color:#d29922; border:1px solid rgba(210,153,34,0.25); }
-  .tier-low      { background:rgba(248,81,73,0.12);   color:#f85149; border:1px solid rgba(248,81,73,0.2); }
-  /* Tone badges */
-  .tone-auth    { background:rgba(0,179,126,0.12); color:var(--emerald); border:1px solid rgba(0,179,126,0.25); }
-  .tone-neutral { background:rgba(139,148,158,0.12); color:var(--text-muted); border:1px solid rgba(139,148,158,0.2); }
-
-  /* Misc */
-  .sanity-box { background:rgba(210,153,34,0.08); border:1px solid rgba(210,153,34,0.25); border-radius:10px; padding:16px 20px; margin-bottom:24px; }
-  .sanity-box h4 { font-family:'Inter',sans-serif; color:var(--warn); margin-bottom:8px; font-size:13px; font-weight:600; }
-  .sanity-box ul { padding-left:16px; color:var(--text-muted); font-size:12px; }
-  .source-badge { display:inline-flex; align-items:center; gap:5px; font-family:'Inter',sans-serif; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; padding:3px 8px; border-radius:20px; margin-left:10px; vertical-align:middle; }
-  .source-real { background:rgba(63,185,80,0.12); color:#3fb950; border:1px solid rgba(63,185,80,0.25); }
-  .source-stub { background:rgba(210,153,34,0.12); color:#d29922; border:1px solid rgba(210,153,34,0.25); }
-  .metric-note { font-family:'Inter',sans-serif; font-size:12px; color:var(--text-muted); background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-bottom:20px; line-height:1.7; }
-  .metric-note strong { color:#c9d1d9; }
-  .vis-scale { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
-  .vis-scale-item { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 16px; font-family:'Inter',sans-serif; font-size:12px; }
-  .vis-scale-item strong { display:block; font-size:13px; margin-bottom:3px; }
-
-  /* YouTube */
-  .yt-channel-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px 24px; margin-bottom:20px; }
-  .yt-channel-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
-  .yt-icon { font-size:20px; color:#ff4e45; }
-  .yt-channel-title { font-family:'Syne',sans-serif; font-size:16px; font-weight:700; }
-  .yt-channel-link { font-family:'Inter',sans-serif; font-size:11px; color:var(--text-muted); text-decoration:none; }
-  .yt-stats-row { display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
-  .yt-stat { background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:8px; padding:10px 16px; min-width:130px; }
-  .yt-stat-label { font-family:'Inter',sans-serif; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted); margin-bottom:4px; }
-  .yt-stat-value { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; color:var(--text); }
-  .yt-top-title { font-family:'Inter',sans-serif; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted); margin-bottom:10px; }
-
-  /* Cost */
-  .cost-summary { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
-  .cost-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 20px; min-width:160px; }
-  .cost-label { font-family:'Inter',sans-serif; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted); margin-bottom:6px; }
-  .cost-value { font-family:'Syne',sans-serif; font-size:22px; font-weight:700; color:var(--emerald); }
-
-  /* Footer */
-  .footer { padding:28px 48px; text-align:center; color:var(--text-muted); font-family:'Inter',sans-serif; font-size:12px; letter-spacing:0.02em; }
-  .footer strong { color:var(--emerald); }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Syne:wght@400;700;800&display=swap');
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface2: #1c2128;
+  --border: #30363d; --text: #e6edf3; --text-muted: #8b949e;
+  --emerald: #00b37e; --emerald-dim: #00b37e33;
+  --good: #3fb950; --warn: #d29922; --bad: #f85149;
+  --accent: #58a6ff; --accent2: #a371f7;
+}
+* { box-sizing: border-box; }
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.6; }
+.container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+.header { text-align: center; padding: 40px 0 20px; border-bottom: 1px solid var(--border); margin-bottom: 30px; }
+h1 { font-family: 'Syne', sans-serif; font-size: 32px; font-weight: 800; margin: 0 0 8px; color: var(--text); }
+.subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; }
+.client-badge { display: inline-block; background: var(--emerald-dim); color: var(--emerald); border: 1px solid var(--emerald); border-radius: 6px; padding: 4px 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; margin-bottom: 24px; }
+.section-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.section-desc { color: var(--text-muted); font-size: 13px; margin: 0 0 20px; }
+.metric-note { background: var(--surface2); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 6px; font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+th { font-weight: 600; color: var(--text-muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; background: var(--surface2); }
+.th-group { border-bottom: 2px solid var(--border); text-align: center; }
+td { vertical-align: top; }
+.highlight { color: var(--emerald); font-weight: 600; }
+.good { color: var(--good); }
+.warn { color: var(--warn); }
+.bad { color: var(--bad); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.tone-auth { background: rgba(0,179,126,0.12); color: var(--emerald); border: 1px solid rgba(0,179,126,0.3); }
+.tone-neutral { background: rgba(139,148,158,0.12); color: var(--text-muted); border: 1px solid rgba(139,148,158,0.3); }
+.tier-high { background: rgba(0,179,126,0.12); color: var(--emerald); border: 1px solid rgba(0,179,126,0.3); }
+.tier-moderate { background: rgba(210,153,34,0.12); color: var(--warn); border: 1px solid rgba(210,153,34,0.3); }
+.tier-low { background: rgba(248,81,73,0.12); color: var(--bad); border: 1px solid rgba(248,81,73,0.3); }
+.action-fix-now { background: rgba(210,153,34,0.12); color: var(--warn); border: 1px solid rgba(210,153,34,0.3); }
+.action-leverage { background: rgba(0,179,126,0.12); color: var(--emerald); border: 1px solid rgba(0,179,126,0.3); }
+.action-optimise { background: rgba(88,166,255,0.12); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+.action-invest { background: rgba(248,81,73,0.12); color: var(--bad); border: 1px solid rgba(248,81,73,0.3); }
+.source-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-left: auto; }
+.source-real { background: rgba(0,179,126,0.1); color: var(--emerald); border: 1px solid rgba(0,179,126,0.25); }
+.source-stub { background: rgba(139,148,158,0.1); color: var(--text-muted); border: 1px solid rgba(139,148,158,0.25); }
+.source-fallback { background: rgba(210,153,34,0.1); color: var(--warn); border: 1px solid rgba(210,153,34,0.25); }
+.scorecards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.scorecard-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
+.sc-org { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.sc-grade { font-family: 'Syne', sans-serif; font-size: 48px; font-weight: 800; margin-bottom: 4px; }
+.sc-overall { font-size: 14px; color: var(--text-muted); margin-bottom: 12px; }
+.sc-breakdown { display: flex; justify-content: center; gap: 16px; font-size: 12px; color: var(--text-muted); }
+.grade-a .sc-grade { color: var(--good); }
+.grade-b .sc-grade { color: var(--accent); }
+.grade-c .sc-grade { color: var(--warn); }
+.grade-d .sc-grade { color: #f0883e; }
+.grade-f .sc-grade { color: var(--bad); }
+.yt-channel-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+.yt-channel-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.yt-icon { font-size: 24px; color: var(--bad); }
+.yt-channel-title { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; }
+.yt-channel-link { font-size: 11px; color: var(--text-muted); text-decoration: none; }
+.yt-stats-row { display: flex; gap: 24px; margin-bottom: 14px; flex-wrap: wrap; }
+.yt-stat { text-align: center; }
+.yt-stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+.yt-stat-value { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; }
+.yt-top-title { font-size: 12px; color: var(--text-muted); font-weight: 600; margin-bottom: 8px; }
+.footer { text-align: center; padding: 30px; color: var(--text-muted); font-size: 12px; border-top: 1px solid var(--border); margin-top: 20px; }
+.subsection-title { font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; margin: 20px 0 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+@media print { body { background: #fff; color: #000; } .section { background: #fff; border-color: #ddd; } }
 </style>
 </head>
 <body>
+<div class="container">
 
-<!-- ══ COVER ══════════════════════════════════════════════════════════════════ -->
-<div class="cover">
-  <div class="confidential-badge">Confidential</div>
-  <div class="cover-logo">Emerald AI · Air Quality Intelligence</div>
-  <h1 class="cover-title">${title}</h1>
-  <p class="cover-subtitle">${subtitle}</p>
-  <div class="cover-meta">
-    ${clientName ? `<div class="cover-meta-item"><div class="cover-meta-label">Prepared for</div><div class="cover-meta-value">${clientName}</div></div>` : ""}
-    <div class="cover-meta-item"><div class="cover-meta-label">Prepared by</div><div class="cover-meta-value">Emerald AI</div></div>
-    <div class="cover-meta-item"><div class="cover-meta-label">Organisations</div><div class="cover-meta-value">${meta.orgs.join(", ")}</div></div>
-    <div class="cover-meta-item"><div class="cover-meta-label">Period</div><div class="cover-meta-value">${meta.date_range.from} → ${meta.date_range.to}</div></div>
-    <div class="cover-meta-item"><div class="cover-meta-label">Outlets</div><div class="cover-meta-value">${meta.outlets.join(", ")}</div></div>
-    <div class="cover-meta-item"><div class="cover-meta-label">LLMs</div><div class="cover-meta-value">${meta.llms.join(", ")}</div></div>
-    <div class="cover-meta-item"><div class="cover-meta-label">Generated</div><div class="cover-meta-value">${new Date(generatedAt).toLocaleString()}</div></div>
-  </div>
-  <div class="cover-benchmarks">
-    <strong>Benchmarks:</strong>&nbsp;
-    Rival IQ 2025 Nonprofit Industry Report &nbsp;·&nbsp; Hootsuite 2025 &nbsp;·&nbsp; Sprout Social 2025 &nbsp;·&nbsp; Metricool/Statista 2024
-    &nbsp;·&nbsp; All benchmarks use medians (not averages) — resistant to viral outliers.
-  </div>
+<div class="header">
+  <h1>${title}</h1>
+  <div class="subtitle">${subtitle}</div>
+  ${clientBadge}
+  ${stubBadgesHtml}
 </div>
 
-<nav class="nav">
-  ${isEnabled("methodology") ? `<a href="#methodology">${getTitle("methodology","Methodology")}</a>` : ""}
-  ${isEnabled("social") ? `<a href="#social">${getTitle("social","Social")}</a>` : ""}
-  ${isEnabled("media") ? `<a href="#media">${getTitle("media","Media")}</a>` : ""}
-  ${isEnabled("journalist_tone") ? `<a href="#journalist-tone">${getTitle("journalist_tone","Journalist Tone")}</a>` : ""}
-  ${isEnabled("wikipedia") && wikiEntries.length > 0 ? `<a href="#wikipedia-context">${getTitle("wikipedia","Org Context")}</a>` : ""}
-  ${isEnabled("aeo") ? `<a href="#aeo">${getTitle("aeo","AEO / LLM")}</a>` : ""}
-  ${isEnabled("scorecards") ? `<a href="#scorecards">${getTitle("scorecards","Scorecards")}</a>` : ""}
-  ${isEnabled("action_matrix") ? `<a href="#action-matrix">${getTitle("action_matrix","Action Matrix")}</a>` : ""}
-</nav>
-
-${stats.sanity_errors?.length ? `<div class="section"><div class="sanity-box"><h4>⚠ Data Quality Warnings</h4><ul>${stats.sanity_errors.map((e)=>`<li>${e}</li>`).join("")}</ul></div></div>` : ""}
-
-<!-- ══ METHODOLOGY ═══════════════════════════════════════════════════════════ -->
+<!-- ══ METHODOLOGY ════════════════════════════════════════════════════════════ -->
 ${isEnabled("methodology") ? `<div id="methodology" class="section">
-  <h2 class="section-title">${getTitle("methodology","Methodology &amp; Definitions")}</h2>
+  <h2 class="section-title">${getTitle("methodology","Methodology & Definitions")}</h2>
   <p class="section-desc">${getDesc("methodology","How each table is built, what the metrics mean, and which benchmarks are used.")}</p>
   <div class="metric-note">
-    <strong>Table 1 — Social Media Engagement</strong><br>
-    Platforms: YouTube (Long-form + Shorts), X/Twitter, Instagram, LinkedIn — where confirmed handles exist.
-    <em>ER % = engagement metrics ÷ impressions × 100.</em>
-    Benchmarks = Rival IQ 2025 Nonprofit medians (150+ orgs, same 3-month window). Medians used over averages — one viral post can inflate an average by 10×.
-    YouTube impressions = cumulative views across the top 10 most-viewed videos (all-time; YouTube Data API v3 does not support date-filtered views without Analytics OAuth).
-    X impressions = via X API v2 (own account data only).
-    Instagram &amp; LinkedIn handles shown as "—" until confirmed.<br><br>
-    <strong>Table 2 — Media Coverage</strong><br>
-    Outlets tracked via Serper News API (Google News index). Tone classification:
-    <strong style="color:var(--emerald)">A = Authoritative</strong> — org is the primary expert source, researcher quoted directly.
-    <strong style="color:var(--text-muted)">N = Neutral</strong> — org is mentioned among several sources but not as the lead expert.
-    This is NOT a positive/negative scale. Authoritative tone is the goal — it directly raises LLM citation probability.
-    Dofollow links estimated at 60% of mentions for major outlets (verified via SEMrush where available).<br><br>
-    <strong>Table 3 — LLM / AEO Visibility</strong><br>
-    5 generic discovery queries per LLM run live via official APIs (ChatGPT-4o, Perplexity AI, Google Gemini).
-    Queries are deliberately generic — the score measures whether the org is mentioned <em>unprompted</em>, which is the true test of LLM visibility.
-    Mention rate expressed as X/20. Position = rank of first mention in the response (1 = named first).
-    AI Visibility Scale is Emerald AI v1.0 — no universal industry standard exists as of 2025.
-    Methodology reference: Aggarwal et al. (2023) <em>GEO: Generative Engine Optimisation</em> — <a href="https://arxiv.org/abs/2311.09735" target="_blank" style="color:var(--emerald)">arxiv.org/abs/2311.09735</a>
+    <strong>Social Media (Table 1)</strong> — Engagement Rate = (likes + shares + comments + saves) / impressions × 100. Benchmarks: Rival IQ 2025 Nonprofit medians.<br>
+    <strong>Media Coverage (Table 2)</strong> — Authoritative (A) = org cited as primary expert; Neutral (N) = org mentioned among peers. Aggregated from Google-indexed news via Serper.<br>
+    <strong>AEO / LLM Visibility (Table 3)</strong> — 5 generic discovery queries per LLM. Mention count = unprompted natural mentions. Score = mention weight (40) + position weight (30) + citation weight (30).<br>
+    <strong>Scorecards (Table 4)</strong> — Weighted composite: Social 30% · Media 40% · AEO 30% | A ≥80 · B 65–79 · C 50–64 · D 35–49 · F &lt;35
   </div>
 </div>` : ""}
 
-<!-- ══ SOCIAL ═════════════════════════════════════════════════════════════════ -->
+<!-- ══ SOCIAL MEDIA ═══════════════════════════════════════════════════════════ -->
 ${isEnabled("social") ? `<div id="social" class="section">
   <h2 class="section-title">${getTitle("social","Social Media Engagement")}
-    <span class="source-badge source-real">● YouTube Live</span>
-    <span class="source-badge source-stub">○ X Simulated</span>
+    <span class="source-badge source-real">● YouTube OAuth2</span>
+    <span class="source-badge source-real">● X API (Serper fallback)</span>
   </h2>
   <p class="section-desc">${getDesc("social","Reach and engagement across YouTube (Long-form + Shorts) and X. Benchmarks = Rival IQ 2025 Nonprofit medians.")}</p>
   <div class="metric-note">
-    <strong>Impressions / Views</strong> — top-10 video views (all-time, YouTube Data API v3 limitation). &nbsp;
-    <strong>ER %</strong> — engagement ÷ impressions × 100. &nbsp;
-    <strong>Benchmark</strong> — Rival IQ 2025 medians: YT Long-form 1.72%, YT Shorts 6.2%, X 2.44%. &nbsp;
-    <strong>▲ / ▼</strong> — above / below benchmark. &nbsp;
-    <strong>Shares / Saves</strong> — not public via YouTube Data API v3 (shown as —). &nbsp;
-    <strong>X figures</strong> — simulated (X API v2 requires a paid subscription).
+    <strong>Engagement Rate</strong> = (likes + shares + comments + saves) / impressions × 100. YouTube Long-form benchmark = 1.72%, Shorts = 6.2%, X = 2.44% (Rival IQ 2025). ▲ = above benchmark, ▼ = below.
   </div>
-
-  ${ytChannels.length > 0 ? `<div style="margin-bottom:28px">${ytChannelCards}</div>` : ""}
-
-  ${sentimentRows ? `
-  <div style="margin-bottom:36px">
-    <div class="subsection-title">Comment Sentiment Analysis
-      <span class="source-badge source-real">● GPT-4o-mini · YouTube only</span>
-    </div>
-    <div class="metric-note" style="margin-bottom:14px">
-      <strong>Methodology</strong> — Up to 250 comments fetched from top 5 videos per org (YouTube Data API v3 commentThreads).
-      GPT-4o-mini step 1: <em>filter</em> — discard generic reactions, spam, off-topic comments; keep only org-relevant comments.
-      Step 2: <em>classify</em> each kept comment as <strong style="color:var(--good)">Positive</strong>, <span style="color:var(--text-muted)">Neutral</span>, or <strong style="color:var(--bad)">Negative</strong>.
-      Step 3: <em>extract recurring negative topics</em> for root-cause diagnosis.
-      The <strong>Verdict</strong> is a GPT-generated one-sentence summary.
-    </div>
-    <table>
-      <thead><tr>
-        <th>Organisation</th><th>Positive</th><th>Neutral</th><th>Negative</th>
-        <th>Relevant / Fetched</th><th>Negative Spike Topics</th><th>Verdict</th>
-      </tr></thead>
-      <tbody>${sentimentRows}</tbody>
-    </table>
-  </div>` : ""}
-
-  <div class="subsection-title" style="margin-bottom:14px">Platform Engagement Summary</div>
   <table>
-    <thead>
-      <tr>
-        <th rowspan="2">Organisation</th>
-        <th rowspan="2">Platform</th>
-        <th colspan="3" class="th-group">REACH METRICS</th>
-        <th colspan="4" class="th-group">ENGAGEMENT METRICS</th>
-        <th rowspan="2">ER %</th>
-        <th rowspan="2">Benchmark</th>
-        <th rowspan="2">vs Bench</th>
-      </tr>
-      <tr>
-        <th>Impressions</th><th>Engagement</th><th>Likes</th>
-        <th>Shares</th><th>Comments</th><th>Saves</th><th></th>
-      </tr>
-    </thead>
-    <tbody>${socialRows}${placeholderRows}</tbody>
+    <thead><tr>
+      <th>Organisation</th><th>Platform</th>
+      <th>Impressions</th><th>Reach</th><th>Likes</th><th>Shares</th><th>Comments</th><th>Saves</th><th>Quote RT</th>
+      <th>ER %</th><th>Benchmark</th><th>vs BM</th>
+    </tr></thead>
+    <tbody>${socialRows}</tbody>
   </table>
+  <div class="subsection-title">YouTube Channels</div>
+  ${ytChannelCards}
+  ${commentSentimentSection}
 </div>` : ""}
 
-<!-- ══ MEDIA ══════════════════════════════════════════════════════════════════ -->
+<!-- ══ MEDIA COVERAGE ═══════════════════════════════════════════════════════════ -->
 ${isEnabled("media") ? `<div id="media" class="section">
   <h2 class="section-title">${getTitle("media","Media Coverage")}
     <span class="source-badge source-real">● Serper News API</span>
   </h2>
   <p class="section-desc">${getDesc("media","News mentions, dofollow links, direct citations, and journalist tone across tracked outlets. AQ content only.")}</p>
   <div class="metric-note">
-    <strong>Total Mentions</strong> — articles found via Serper News API (Google News index). Uses a 5-tier fallback: (1) site-specific search, (2) quoted org name, (3) topic-only search, (4) backup specialist outlets (Down To Earth, The Wire, Mongabay India, Scroll, The Print, etc.), (5) broad web search. Outlet names marked with ★ were found through backup searches. &nbsp;
-    <strong>Dofollow Links</strong> — estimated backlinks passing domain authority (60% of mentions for major outlets). &nbsp;
-    <strong>Direct Cites</strong> — articles whose snippet or title explicitly names the organisation. &nbsp;
-    <strong>Authoritative Tone %</strong> — % of outlet rows where tone = A (org is primary expert source, researcher quoted). <em>N = Neutral (not negative)</em> — org mentioned among peers. Authoritative coverage directly raises LLM citation probability.
+    <strong>Tone</strong> — A = Authoritative (org cited as primary expert / quoted directly); N = Neutral (org mentioned among peers, not as lead). This is NOT positive vs negative sentiment.<br>
+    <strong>Direct Cites</strong> = articles where the org is explicitly named as the source or researcher. <strong>Dofollow</strong> = links that pass SEO authority.
   </div>
+
+  <div class="subsection-title">Outlet-by-Outlet Matrix</div>
+  <table>
+    <thead><tr><th>Org</th>${outletGroupHeaders}<th style="font-size:10px">Totals</th></tr></thead>
+    <thead><tr><th></th>${outletSubHeaders}<th></th></tr></thead>
+    <tbody>${mediaMatrixRows}</tbody>
+  </table>
+
+  <div class="subsection-title">Summary</div>
   <table>
     <thead><tr>
-      <th>Organisation</th><th>Total Mentions</th><th>Dofollow Links</th>
-      <th>Direct Cites</th><th>Authoritative Tone %</th><th>Top Outlets by Mentions</th>
+      <th>Organisation</th><th>Total Mentions</th><th>Dofollow</th><th>Nofollow</th><th>Direct Cites</th><th>Auth. Tone %</th><th>Top Outlets</th>
     </tr></thead>
     <tbody>${mediaRows}</tbody>
   </table>
 </div>` : ""}
 
-${isEnabled("wikipedia") ? wikiSection : ""}
-
-<!-- ══ JOURNALIST TONE ════════════════════════════════════════════════════════ -->
+<!-- ══ JOURNALIST TONE EVIDENCE ═════════════════════════════════════════════════ -->
 ${isEnabled("journalist_tone") ? `<div id="journalist-tone" class="section">
   <h2 class="section-title">${getTitle("journalist_tone","Journalist Tone Evidence")}
-    <span class="source-badge source-real">● Serper Articles</span>
+    <span class="source-badge source-real">● Serper News API</span>
   </h2>
   <p class="section-desc">${getDesc("journalist_tone","Representative articles used to classify journalist tone per organisation × outlet. Every tone classification is traceable to a source article.")}</p>
   <div class="metric-note">
-    <strong>Authoritative</strong> — org is cited as the primary expert source; researcher quoted directly; research named as the primary data anchor. &nbsp;
-    <strong>Neutral</strong> — org is mentioned among several sources; not positioned as the lead expert. &nbsp;
-    Tone is scored per outlet per org, including when the org is one of several sources cited in an article.
-    Articles shown are representative — first result returned for that outlet × org combination via Serper News API.
+    Each tone classification (A = Authoritative, N = Neutral) is backed by a representative article from the search results. Click any article title to open the source.
   </div>
-  ${toneEvidenceRows ? `
+  ${orgToneSummaries}
   <table>
     <thead><tr>
       <th>Organisation</th><th>Outlet</th><th>Tone</th><th>Representative Article</th><th>Date</th>
     </tr></thead>
     <tbody>${toneEvidenceRows}</tbody>
-  </table>` : `<p style="color:var(--text-muted);font-size:13px">No tone evidence data — run fetch_serper to populate this section.</p>`}
+  </table>
 </div>` : ""}
 
-<!-- ══ AEO / LLM ══════════════════════════════════════════════════════════════ -->
+<!-- ══ WIKIPEDIA CONTEXT ════════════════════════════════════════════════════════ -->
+${isEnabled("wikipedia") && wikiSection ? wikiSection : ""}
+
+<!-- ══ AEO / LLM VISIBILITY ═══════════════════════════════════════════════════ -->
 ${isEnabled("aeo") ? `<div id="aeo" class="section">
   <h2 class="section-title">${getTitle("aeo","AEO / LLM Visibility")}
-    <span class="source-badge source-real">● Live API Calls</span>
+    <span class="source-badge source-real">● ChatGPT gpt-4o-mini</span>
+    <span class="source-badge source-real">● Perplexity sonar-small</span>
+    <span class="source-badge source-real">● Gemini 1.5-flash</span>
   </h2>
   <p class="section-desc">${getDesc("aeo","How often each organisation appears in LLM responses to generic air-quality discovery queries. 5 queries per LLM, scored out of 20.")}</p>
-
   <div class="metric-note">
-    <strong>Methodology</strong> — 5 generic discovery queries run live per LLM (ChatGPT, Perplexity, Gemini). Queries are deliberately non-org-specific — the score measures unprompted natural mentions, which is the true test of AEO effectiveness. Reference: Aggarwal et al. (2023) <em>GEO</em> paper. &nbsp;
-    <strong>Mention Rate (X/20)</strong> — number of queries where the org name appeared. &nbsp;
-    <strong>Avg Position</strong> — where in the response the org first appeared (1 = named first, 5 = late). — = never mentioned. &nbsp;
-    <strong>Citation Type</strong> — Direct: org URL in response; Passing: named but no link; None: not mentioned. &nbsp;
-    <strong>Visibility Score</strong> — 0–100 composite: 40pts mention rate, 30pts position, 30pts citation depth.
+    <strong>Visibility Score</strong> = mention weight (40) + position weight (30) + citation weight (30). <strong>Tier</strong>: High (>65% & pos ≤2) · Moderate (40–65%) · Low (&lt;40%). Queries are generic — they measure whether the org is mentioned unprompted.
   </div>
-
-  <div class="vis-scale">
-    <div class="vis-scale-item"><strong class="tier-high" style="font-size:12px">High</strong>&nbsp; &gt;65% (13+/20) AND avg pos ≤ 2.0</div>
-    <div class="vis-scale-item"><strong class="tier-moderate" style="font-size:12px">Moderate</strong>&nbsp; 40–65% (8–13/20) OR avg pos 2.0–3.0</div>
-    <div class="vis-scale-item"><strong class="tier-low" style="font-size:12px">Low</strong>&nbsp; &lt;40% (&lt;8/20) AND avg pos &gt; 3.0</div>
-    <div class="vis-scale-item" style="font-size:11px;color:var(--text-muted)">Emerald AI Visibility Scale v1.0 — no universal industry standard exists as of 2025</div>
-  </div>
-
-  <table style="margin-bottom:32px">
+  <table>
     <thead><tr>
-      <th>Organisation</th><th>LLM</th><th>Mention Rate</th><th>Avg Position</th>
-      <th>Citation Type</th><th>Direct Links</th><th>Visibility Score</th><th>Tier</th>
+      <th>Organisation</th><th>LLM</th><th>Mentions</th><th>Avg Position</th><th>Citation</th><th>Direct Links</th><th>Score</th><th>Tier</th>
     </tr></thead>
     <tbody>${aeoRows}</tbody>
   </table>
@@ -695,6 +668,7 @@ ${isEnabled("action_matrix") ? `<div id="action-matrix" class="section">
   Generated by <strong>Emerald AI</strong> · Air Quality Media Intelligence Platform · ${new Date(generatedAt).toUTCString()} · <strong>CONFIDENTIAL</strong>
 </footer>
 
+</div>
 </body>
 </html>`;
 }
