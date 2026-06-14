@@ -176,9 +176,11 @@
   }
 
   /* ── PROBLEM ── */
-  #problem .section-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 5rem; align-items: center; }
-  .problem-text { }
-  .problem-list { display: flex; flex-direction: column; gap: 0; margin-top: 2rem; }
+  .problem-body-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 3rem;
+    align-items: start; margin-top: 3rem;
+  }
+  .problem-list { display: flex; flex-direction: column; gap: 0; }
   .problem-item {
     display: flex; gap: 1.25rem; padding: 1.5rem 0;
     border-bottom: 1px solid var(--border); align-items: flex-start;
@@ -375,23 +377,91 @@
   /* ── DIVIDER ── */
   .gold-rule { width: 60px; height: 3px; background: var(--gold); margin: 1.5rem 0; }
 
-  /* ── RESPONSIVE ── */
+  /* ── HAMBURGER ── */
+  .nav-hamburger {
+    display: none; flex-direction: column; gap: 5px;
+    cursor: pointer; padding: 4px; background: none; border: none;
+  }
+  .nav-hamburger span {
+    display: block; width: 22px; height: 2px;
+    background: var(--navy); transition: all 0.3s;
+  }
+  .mobile-menu {
+    display: none; position: fixed; top: 70px; left: 0; right: 0;
+    background: var(--white); border-bottom: 1px solid var(--border);
+    z-index: 99; padding: 1.5rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  }
+  .mobile-menu.open { display: block; }
+  .mobile-menu ul { list-style: none; display: flex; flex-direction: column; gap: 0; }
+  .mobile-menu ul li a {
+    display: block; padding: 0.875rem 0;
+    font-size: 1rem; color: var(--text-dark); text-decoration: none;
+    font-weight: 500; border-bottom: 1px solid var(--border);
+  }
+  .mobile-menu ul li:last-child a { border-bottom: none; }
+  .mobile-menu .mob-cta {
+    display: block; margin-top: 1.25rem; width: 100%; text-align: center;
+    padding: 0.9rem; background: var(--navy); color: var(--white);
+    text-decoration: none; font-weight: 600; font-size: 0.95rem;
+  }
+
+  /* ── TABLET ── */
   @media (max-width: 1024px) {
     .hero-inner { grid-template-columns: 1fr; gap: 3rem; }
-    #problem .section-inner { grid-template-columns: 1fr; }
-    .why-grid { grid-template-columns: 1fr; }
+    .hero-card { display: none; }
+    .problem-body-grid { grid-template-columns: 1fr; gap: 2rem; }
+    .why-grid { grid-template-columns: 1fr; gap: 2.5rem; }
     .contact-grid { grid-template-columns: 1fr; gap: 3rem; }
     .results-grid { grid-template-columns: 1fr; }
+    .process-steps { grid-template-columns: 1fr 1fr; }
   }
+
+  /* ── MOBILE ── */
   @media (max-width: 768px) {
     nav { padding: 0 1.25rem; }
     .nav-links { display: none; }
-    .section-inner, .section-inner-wide { padding: 3.5rem 1.25rem; }
-    .services-grid { grid-template-columns: 1fr; }
-    .process-steps { grid-template-columns: 1fr; }
-    .hero-inner { padding: 3rem 1.25rem; }
+    .nav-cta { display: none; }
+    .nav-hamburger { display: flex; }
+
+    .section-inner, .section-inner-wide { padding: 3rem 1.25rem; }
+
+    .hero-inner { padding: 2.5rem 1.25rem; }
+    .hero-headline { font-size: 2.4rem; }
+    .hero-sub { font-size: 0.95rem; }
     .hero-trust-strip { flex-wrap: wrap; gap: 1.5rem; }
-    footer { flex-direction: column; gap: 1.5rem; text-align: center; }
+    .btn-gold, .btn-outline-white { width: 100%; text-align: center; }
+    .hero-actions { flex-direction: column; }
+
+    .problem-body-grid { grid-template-columns: 1fr; }
+
+    .services-grid { grid-template-columns: 1fr; }
+    .service-card { padding: 2rem 1.5rem; }
+
+    .process-steps { grid-template-columns: 1fr; }
+    .process-step { padding: 2rem 1.5rem; }
+
+    .results-grid { grid-template-columns: 1fr; }
+    .result-numbers { flex-wrap: wrap; gap: 1.25rem; }
+
+    .why-grid { grid-template-columns: 1fr; }
+    .why-right { padding: 2rem 1.5rem; }
+
+    .contact-grid { grid-template-columns: 1fr; gap: 2.5rem; }
+
+    .section-title { font-size: 1.85rem; }
+
+    footer {
+      flex-direction: column; gap: 1.25rem;
+      text-align: center; padding: 2rem 1.25rem;
+    }
+    .footer-links { justify-content: center; flex-wrap: wrap; gap: 1rem; }
+  }
+
+  @media (max-width: 400px) {
+    .hero-headline { font-size: 2rem; }
+    .hero-trust-strip { flex-direction: column; gap: 1rem; }
+    .result-numbers { flex-direction: column; gap: 0.75rem; }
   }
 </style>
 </head>
@@ -415,7 +485,21 @@
     <li><a href="#why">Why Us</a></li>
   </ul>
   <a href="#contact" class="nav-cta">Talk to Us</a>
+  <button class="nav-hamburger" id="hamburger" aria-label="Open menu">
+    <span></span><span></span><span></span>
+  </button>
 </nav>
+
+<!-- Mobile Menu -->
+<div class="mobile-menu" id="mobile-menu">
+  <ul>
+    <li><a href="#problem" onclick="closeMobileMenu()">The Problem</a></li>
+    <li><a href="#services" onclick="closeMobileMenu()">What We Do</a></li>
+    <li><a href="#results" onclick="closeMobileMenu()">Our Work</a></li>
+    <li><a href="#why" onclick="closeMobileMenu()">Why Us</a></li>
+  </ul>
+  <a href="#contact" class="mob-cta" onclick="closeMobileMenu()">Talk to Us</a>
+</div>
 
 <!-- HERO -->
 <section id="hero">
@@ -484,12 +568,10 @@
 <!-- THE PROBLEM -->
 <section id="problem" class="section-white">
   <div class="section-inner">
-    <div>
-      <div class="section-eyebrow">The Situation</div>
-      <h2 class="section-title">You've heard about AI.<br>But you don't have time<br>to figure it out.</h2>
-      <div class="gold-rule"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:center;margin-top:3rem;">
+    <div class="section-eyebrow">The Situation</div>
+    <h2 class="section-title">You've heard about AI.<br>But you don't have time<br>to figure it out.</h2>
+    <div class="gold-rule"></div>
+    <div class="problem-body-grid">
       <div>
         <div class="problem-list reveal">
           <div class="problem-item">
@@ -524,7 +606,7 @@
           <div class="pv-deco2"></div>
         </div>
       </div>
-    </div>
+    </div><!-- end problem-body-grid -->
   </div>
 </section>
 
@@ -872,6 +954,16 @@
 </footer>
 
 <script>
+// ── HAMBURGER ──
+const hamburger = document.getElementById('hamburger');
+const mobileMenu = document.getElementById('mobile-menu');
+hamburger.addEventListener('click', () => {
+  mobileMenu.classList.toggle('open');
+});
+function closeMobileMenu() {
+  mobileMenu.classList.remove('open');
+}
+
 // ── SCROLL REVEAL ──
 const revealObs = new IntersectionObserver((entries) => {
   entries.forEach(e => {
