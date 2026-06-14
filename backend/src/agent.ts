@@ -79,7 +79,24 @@ Classify the user's message as one of:
 ChatGPT, Perplexity, Gemini
 
 ## Default outlets (use if not specified)
-Hindustan Times, The Times of India, The Hindu, NDTV, News18, India Today
+Hindustan Times, The Times of India, The Hindu, Indian Express, Deccan Herald,
+NDTV, News18, India Today, Aaj Tak, India TV, ABP News
+
+## TV channel outlets (English and Hindi)
+English TV: NDTV, News18, India Today
+Hindi TV: Aaj Tak, India TV, ABP News
+Always include these when fetching media data — they appear in a separate "TV Channel Coverage" section of the report.
+
+## AQ scope — default keywords to include in ALL media searches
+Core pollutants: AQI, PM2.5, PM10, air pollution, air quality, smog, clean air, NCAP, GRAP
+Extended pollutants: Black Carbon (BC), Ozone (O3), Ammonia (NH3), Carbon Monoxide (CO), Lead (Pb), Nitrogen Dioxide (NO2), Methane (CH4)
+If the user specifies a "Scope filter" list in their message, use THOSE keywords as query_keywords for fetch_serper (in addition to "air quality" and "air pollution" which are always included).
+
+## AQ sub-topics for article classification (for topic ownership analysis)
+NCAP, Policy, PM2.5 Exposure, Stubble Burning, Clean Air Finance, Vehicular Pollution, Health Impact, Industrial Pollution, Heat-AQI,
+Brick Kilns, Petrol Emissions, Diesel Emissions, Super Emitters, Thermal Power Plants (TPP/Coal), Household Pollution, Indoor Pollution,
+Biomass Air Pollution, Rice Residue Burning, Wheat Residue Burning, Road Dust
+Note: NCAP and Policy are SEPARATE topics. NCAP = National Clean Air Programme (specific scheme). Policy = general air quality policy/regulation.
 
 ## LLM visibility queries — MUST be generic discovery questions
 Queries passed to fetch_llm_visibility must be generic questions a user would naturally ask.
@@ -117,7 +134,7 @@ Violating this rule means the user cannot view, download, or interact with the r
   has no indexed X activity in the period — report this honestly, do not inflate.
 - fetch_wikipedia supplements when media coverage is thin. Pass result.data as meta.wiki_data
   to generate_report. Use the Wikipedia summary to give context about the org in the report text.
-- fetch_llm_visibility now runs up to 8 queries (normalised to /20 scale). Trust the numbers.
+- fetch_llm_visibility: OpenAI receives up to 8 queries, Gemini and Perplexity up to 5. All are normalised to /20 for comparability. Each LLM's denominator matches its actual query count — denominators may differ per LLM.
 
 ## Rules
 - NEVER write report content (metrics, tables, analysis) as plain text — always use tools.
@@ -144,9 +161,22 @@ Tone "A" = Authoritative: org is cited as the primary expert source, researcher 
 Tone "N" = Neutral: org is mentioned among several sources but not as the lead expert.
 This is NOT positive vs negative. An org can have 100% Neutral tone and still have excellent coverage.
 
-fetch_serper returns: { data: { [org]: { [outlet]: { mentions, dofollow, direct_cites, tone } } }, tone_evidence: [...] }
+fetch_serper returns: { data: { [org]: { [outlet]: { mentions, dofollow, direct_cites, tone } } }, tone_evidence: [...], citation_evidence: [...] }
 → flatten into raw.media as: [{ org, outlet, mentions, dofollow, direct_cites, tone }, ...]
 → pass result.tone_evidence directly as meta.tone_evidence to generate_report (representative articles for each outlet tone classification)
+→ pass result.citation_evidence directly as meta.citation_evidence to generate_report (articles where org name appears — evidence for Citation Quality section)
+
+## Emerging Narratives — how to populate meta.emerging_narratives
+After collecting all fetch data (but BEFORE calling generate_report), analyse the article titles and snippets from tone_evidence and citation_evidence to identify 2–4 emerging narrative clusters per org.
+An "emerging narrative" = a topic that appears repeatedly across different outlets/articles but is NOT the org's primary stated focus.
+For each narrative:
+  - topic: short name (3–6 words), e.g. "Delhi winter AQI crisis"
+  - inference: 1 sentence explaining WHY this looks like an emerging pattern (e.g. "Found in 4 of 7 articles from Nov–Dec, concentrated in Hindi TV coverage")
+  - articles: up to 5 articles from tone_evidence/citation_evidence that evidence this narrative (pass {title, link, outlet, date})
+  - org: which organisation this narrative is about
+
+Pass the result as meta.emerging_narratives to generate_report.
+If article data is too thin to identify patterns, pass an empty array [].
 
 fetch_youtube returns: { data: { [handle]: { platform, impressions, likes, shares, comments, saves, quote_rt, channel_title, channel_id, channel_total_views, channel_subscribers, channel_video_count, top_videos[], longform: {...}, shorts: {...} } } }
 fetch_x_api returns: { data: { [handle]: { platform, impressions, likes, shares, comments, saves, quote_rt } } }
@@ -440,7 +470,9 @@ const TOOLS: Anthropic.Tool[] = [
             comment_sentiment:  { type: "array", items: { type: "object" }, description: "Comment sentiment from fetch_comment_sentiment result.data" },
             llm_query_results:  { type: "array", items: { type: "object" }, description: "Per-query mention results from fetch_llm_visibility result.query_results" },
             tone_evidence:      { type: "array", items: { type: "object" }, description: "Representative articles for tone classification from fetch_serper result.tone_evidence" },
+            citation_evidence:  { type: "array", items: { type: "object" }, description: "Articles where org name appears — evidence for Citation Quality section. From fetch_serper result.citation_evidence" },
             wiki_data:          { type: "object", description: "Wikipedia summaries from fetch_wikipedia result.data — keyed by org name" },
+            emerging_narratives: { type: "array", items: { type: "object" }, description: "AI-inferred emerging topic clusters per org. Each: { org, topic, inference, articles: [{title,link,outlet,date}] }" },
           },
           required: ["orgs", "date_range", "outlets", "llms"],
         },
@@ -649,6 +681,7 @@ export async function runAgent({
           stub: result.stub,
           data: result.data,
           tone_evidence: (result as any).tone_evidence,
+          citation_evidence: (result as any).citation_evidence,
           serper_requests: (result as any).serper_requests,
         };
         if ((result as any).data_quality) {

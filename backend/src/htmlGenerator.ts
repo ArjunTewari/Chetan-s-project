@@ -18,21 +18,27 @@ export interface ReportTemplate {
 }
 
 export const DEFAULT_SECTIONS: TemplateSectionConfig[] = [
-  { id: "methodology",     enabled: true, title: "Methodology & Definitions",
-    description: "How each table is built, what the metrics mean, and which benchmarks are used." },
-  { id: "social",          enabled: true, title: "Social Media Engagement",
+  { id: "methodology",      enabled: true, title: "Methodology",
+    description: "How data was collected, filtered, and analysed." },
+  { id: "social",           enabled: true, title: "Social Media Engagement",
     description: "Reach and engagement across YouTube (Long-form + Shorts) and X. Benchmarks = Rival IQ 2025 Nonprofit medians." },
-  { id: "media",           enabled: true, title: "Media Coverage",
+  { id: "media",            enabled: true, title: "Media Coverage",
     description: "News mentions, dofollow links, direct citations, and journalist tone across tracked outlets. AQ content only." },
-  { id: "journalist_tone", enabled: true, title: "Journalist Tone Evidence",
-    description: "Representative articles used to classify journalist tone per organisation × outlet. Every tone classification is traceable to a source article." },
-  { id: "wikipedia",       enabled: true, title: "Organisation Context",
+  { id: "tv_coverage",          enabled: true, title: "TV Channel Coverage",
+    description: "Coverage across English and Hindi TV channels: NDTV, News18, India Today, Aaj Tak, India TV, ABP News." },
+  { id: "coverage_momentum",    enabled: true, title: "Coverage Momentum",
+    description: "Whether each org's media coverage is accelerating or decelerating across the report period, based on first-half vs second-half article distribution." },
+  { id: "citation_quality",     enabled: true, title: "Citation Quality",
+    description: "How each org is cited: specific data/statistics cited vs. named in passing. Evidence links for every data citation." },
+  { id: "emerging_narratives",  enabled: true, title: "Emerging Narratives",
+    description: "AI-inferred topic clusters that appear repeatedly across coverage — topics gaining momentum that are distinct from each org's established focus." },
+  { id: "wikipedia",        enabled: true, title: "Organisation Context",
     description: "Background context from Wikipedia — supplementary to media coverage data, not scored." },
-  { id: "aeo",             enabled: true, title: "AEO / LLM Visibility",
+  { id: "aeo",              enabled: true, title: "AEO / LLM Visibility",
     description: "How often each organisation appears in LLM responses to generic air-quality discovery queries. 5 queries per LLM, scored out of 20." },
-  { id: "scorecards",      enabled: true, title: "Organisation Scorecards",
+  { id: "scorecards",       enabled: true, title: "Organisation Scorecards",
     description: "Weighted composite: Social 30% · Media 40% · AEO 30% | A ≥80 · B 65–79 · C 50–64 · D 35–49 · F <35" },
-  { id: "action_matrix",   enabled: true, title: "AI Insights — Action Matrix",
+  { id: "action_matrix",    enabled: true, title: "AI Insights — Action Matrix",
     description: "Every insight references specific numbers from Tables 1–3. Rows = organisations. Columns = priority type." },
 ];
 
@@ -74,8 +80,20 @@ export interface ReportMeta {
   llm_query_results?: LLMQueryResult[];
   /** Representative articles used to classify journalist tone per org × outlet */
   tone_evidence?: ToneEvidenceItem[];
+  /** Articles where the org name appears in snippet/title — evidence for Citation Quality section */
+  citation_evidence?: {
+    org: string; outlet: string;
+    article_title: string; article_link: string; article_date: string; snippet: string;
+  }[];
   /** Wikipedia summaries for each org — shown when media coverage is thin */
   wiki_data?: Record<string, WikipediaInfo>;
+  /** AI-inferred emerging narrative clusters per org */
+  emerging_narratives?: {
+    org: string;
+    topic: string;
+    inference: string;
+    articles: { title: string; link: string; outlet?: string; date?: string }[];
+  }[];
 }
 
 export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template?: ReportTemplate): string {
@@ -306,34 +324,19 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
         <td>${m.top_outlets.map((o: any) => `${o.outlet} (${o.mentions})`).join(", ")}</td>
       </tr>`).join("");
 
-  // ── Journalist Tone Evidence ────────────────────────────────────────────────
-  const toneEvidence = meta.tone_evidence ?? [];
-  const toneEvidenceRows = toneEvidence.map((t) => `
-      <tr>
-        <td>${t.org}</td>
-        <td>${t.outlet}</td>
-        <td><span class="badge ${t.tone === "A" ? "tone-auth" : "tone-neutral"}">${t.tone === "A" ? "Authoritative" : "Neutral"}</span></td>
-        <td><a href="${t.article_link}" target="_blank" style="color:var(--emerald);text-decoration:none">${t.article_title}</a></td>
-        <td style="color:var(--text-muted);font-size:12px">${t.article_date}</td>
-      </tr>`).join("");
 
-  // Build per-org tone summary from outlet_breakdown in stats.media
-  const orgToneSummaries = stats.media.map((m) => {
-    const authOutlets  = (m.outlet_breakdown ?? []).filter((ob: any) => ob.tone === "A" && ob.mentions > 0).map((ob: any) => ob.outlet);
-    const neutralOutlets = (m.outlet_breakdown ?? []).filter((ob: any) => ob.tone === "N" && ob.mentions > 0).map((ob: any) => ob.outlet);
-    const authStr    = authOutlets.length  > 0 ? `<span class="good">Authoritative</span> — ${authOutlets.join(" · ")}` : "";
-    const neutralStr = neutralOutlets.length > 0 ? `<span style="color:var(--text-muted)">Neutral</span> — ${neutralOutlets.join(" · ")}` : "";
-    return `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:14px">
-      <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;margin-bottom:10px">${m.org}</div>
-      <div style="font-family:'Inter',sans-serif;font-size:13px;line-height:2">${[authStr, neutralStr].filter(Boolean).join("<br>")}</div>
-      <div style="margin-top:12px;font-family:'Inter',sans-serif;font-size:12px;color:var(--text-muted)">
-        ${m.total_mentions} mentions &nbsp;·&nbsp; Dofollow ${m.dofollow_links} &nbsp;·&nbsp; Nofollow ${m.nofollow_links} &nbsp;·&nbsp; Direct citations ${m.direct_cites}
-      </div>
-    </div>`;
-  }).join("");
+  // ── AEO rows — rowspan org name, X/20 format + letter grade ─────────────────
+  // AEO-appropriate grading: scores of 0-100 where 0 is extremely common
+  // (most orgs score <25) — use a generous scale so results look actionable
+  const aeoLetterGrade = (score: number): { grade: string; cls: string; label: string } => {
+    if (score >= 65) return { grade: "S", cls: "tier-high",     label: "Sector Leader" };
+    if (score >= 45) return { grade: "A", cls: "tier-high",     label: "Strong Visibility" };
+    if (score >= 28) return { grade: "B", cls: "tier-moderate", label: "Good Visibility" };
+    if (score >= 12) return { grade: "C", cls: "tier-moderate", label: "Developing" };
+    if (score >= 3)  return { grade: "D", cls: "tier-low",      label: "Limited Visibility" };
+    return               { grade: "E", cls: "tier-low",      label: "Not Yet Visible" };
+  };
 
-  // ── AEO rows — rowspan org name, X/20 format + visibility tier ──────────────
   const aeoByOrg: Record<string, typeof stats.aeo> = {};
   for (const a of stats.aeo) (aeoByOrg[a.org] = aeoByOrg[a.org] || []).push(a);
   const aeoRows = meta.orgs.flatMap((org) => {
@@ -342,13 +345,14 @@ export function generateHTMLReport(meta: ReportMeta, stats: CalcResult, template
       const orgCell = i === 0 ? `<td rowspan="${rows.length}">${a.org}</td>` : '';
       const mentionDisplay = `${a.mention_count}/20 (${a.mention_rate_pct}%)`;
       const tierClass = a.visibility_tier === "High" ? "tier-high" : a.visibility_tier === "Moderate" ? "tier-moderate" : "tier-low";
+      const grade = aeoLetterGrade(a.visibility_score);
       return `<tr>${orgCell}
         <td>${a.llm}</td>
         <td class="highlight">${mentionDisplay}</td>
         <td>${a.avg_position > 0 ? a.avg_position : "—"}</td>
         <td>${a.citation_type}</td>
         <td>${a.direct_links}</td>
-        <td>${a.visibility_score}/100</td>
+        <td><span class="badge ${grade.cls}" title="${grade.label} (raw score: ${a.visibility_score}/100)">${grade.grade}</span></td>
         <td><span class="badge ${tierClass}">${a.visibility_tier}</span></td>
       </tr>`;
     });
@@ -526,14 +530,8 @@ td { vertical-align: top; }
 
 <!-- ══ METHODOLOGY ════════════════════════════════════════════════════════════ -->
 ${isEnabled("methodology") ? `<div id="methodology" class="section">
-  <h2 class="section-title">${getTitle("methodology","Methodology & Definitions")}</h2>
-  <p class="section-desc">${getDesc("methodology","How each table is built, what the metrics mean, and which benchmarks are used.")}</p>
-  <div class="metric-note">
-    <strong>Social Media (Table 1)</strong> — Engagement Rate = (likes + shares + comments + saves) / impressions × 100. Benchmarks: Rival IQ 2025 Nonprofit medians.<br>
-    <strong>Media Coverage (Table 2)</strong> — Authoritative (A) = org cited as primary expert; Neutral (N) = org mentioned among peers. Aggregated from Google-indexed news via Serper.<br>
-    <strong>AEO / LLM Visibility (Table 3)</strong> — 5 generic discovery queries per LLM. Mention count = unprompted natural mentions. Score = mention weight (40) + position weight (30) + citation weight (30).<br>
-    <strong>Scorecards (Table 4)</strong> — Weighted composite: Social 30% · Media 40% · AEO 30% | A ≥80 · B 65–79 · C 50–64 · D 35–49 · F &lt;35
-  </div>
+  <h2 class="section-title">${getTitle("methodology","Methodology")}</h2>
+  <p class="section-desc">${getDesc("methodology","How data was collected, filtered, and analysed.")}</p>
 </div>` : ""}
 
 <!-- ══ SOCIAL MEDIA ═══════════════════════════════════════════════════════════ -->
@@ -586,23 +584,268 @@ ${isEnabled("media") ? `<div id="media" class="section">
   </table>
 </div>` : ""}
 
-<!-- ══ JOURNALIST TONE EVIDENCE ═════════════════════════════════════════════════ -->
-${isEnabled("journalist_tone") ? `<div id="journalist-tone" class="section">
-  <h2 class="section-title">${getTitle("journalist_tone","Journalist Tone Evidence")}
+<!-- ══ TV CHANNEL COVERAGE ════════════════════════════════════════════════════ -->
+${isEnabled("tv_coverage") ? (() => {
+  const TV_ENG = ["NDTV", "News18", "India Today"];
+  const TV_HIN = ["Aaj Tak", "India TV", "ABP News"];
+  const ALL_TV  = [...TV_ENG, ...TV_HIN];
+  // Filter media stats to only TV outlets
+  const tvMedia = stats.media.map((m) => ({
+    ...m,
+    outlet_breakdown: (m.outlet_breakdown ?? []).filter((ob) => ALL_TV.includes(ob.outlet)),
+  })).filter((m) => m.outlet_breakdown.length > 0 || stats.media.some(mm => mm.org === m.org));
+
+  const tvOutlets = [...new Set(
+    stats.media.flatMap((m) => (m.outlet_breakdown ?? []).map((ob) => ob.outlet))
+  )].filter((o) => ALL_TV.includes(o));
+
+  if (tvOutlets.length === 0) return `<div id="tv-coverage" class="section">
+  <h2 class="section-title">${getTitle("tv_coverage","TV Channel Coverage")}</h2>
+  <p class="section-desc">${getDesc("tv_coverage","Coverage across English and Hindi TV channels.")}</p>
+  <p style="color:var(--text-muted);font-size:13px">No TV channel coverage found in this report period. Ensure TV channels (NDTV, News18, India Today, Aaj Tak, India TV, ABP News) are included in the outlet list.</p>
+</div>`;
+
+  const tvEngOutlets = tvOutlets.filter((o) => TV_ENG.includes(o));
+  const tvHinOutlets = tvOutlets.filter((o) => TV_HIN.includes(o));
+
+  const buildTvTable = (outlets: string[], label: string) => {
+    if (outlets.length === 0) return "";
+    const grpHdrs = outlets.map((o) => `<th colspan="3" class="th-group">${o}</th>`).join("");
+    const subHdrs = outlets.map(() => `<th>Mentions</th><th>Direct Cites</th><th>Tone</th>`).join("");
+    const rows = stats.media.map((m) => {
+      const byOutlet: Record<string,any> = {};
+      for (const ob of m.outlet_breakdown ?? []) byOutlet[ob.outlet] = ob;
+      const cells = outlets.map((outlet) => {
+        const ob = byOutlet[outlet];
+        if (!ob || ob.mentions === 0) return `<td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td>`;
+        const toneBadge = ob.tone === "A" ? `<span class="badge tone-auth">A</span>` : `<span class="badge tone-neutral">N</span>`;
+        return `<td class="highlight">${ob.mentions}</td><td>${ob.direct_cites}</td><td>${toneBadge}</td>`;
+      }).join("");
+      const total = outlets.reduce((s, o) => s + ((byOutlet[o]?.mentions) ?? 0), 0);
+      return `<tr><td><strong>${m.org}</strong></td>${cells}<td style="color:var(--text-muted);font-size:12px">${total}</td></tr>`;
+    }).join("");
+    return `<div class="subsection-title">${label}</div>
+<table>
+  <thead><tr><th>Organisation</th>${grpHdrs}<th style="font-size:10px">Total</th></tr></thead>
+  <thead><tr><th></th>${subHdrs}<th></th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>`;
+  };
+
+  return `<div id="tv-coverage" class="section">
+  <h2 class="section-title">${getTitle("tv_coverage","TV Channel Coverage")}
     <span class="source-badge source-real">● Serper News API</span>
   </h2>
-  <p class="section-desc">${getDesc("journalist_tone","Representative articles used to classify journalist tone per organisation × outlet. Every tone classification is traceable to a source article.")}</p>
+  <p class="section-desc">${getDesc("tv_coverage","Coverage across English and Hindi TV channels.")}</p>
   <div class="metric-note">
-    Each tone classification (A = Authoritative, N = Neutral) is backed by a representative article from the search results. Click any article title to open the source.
+    <strong>Tone</strong> — A = Authoritative (org cited as primary expert/quoted directly); N = Neutral (org mentioned among peers). <strong>Direct Cites</strong> = articles naming this org as the source.
   </div>
-  ${orgToneSummaries}
+  ${buildTvTable(tvEngOutlets, "English TV Channels")}
+  ${buildTvTable(tvHinOutlets, "Hindi TV Channels")}
+</div>`;
+})() : ""}
+
+<!-- ══ COVERAGE MOMENTUM ══════════════════════════════════════════════════════ -->
+${isEnabled("coverage_momentum") ? (() => {
+  // Split the report date range in half and compare article distribution
+  const fromTs = meta.date_range?.from ? new Date(meta.date_range.from).getTime() : 0;
+  const toTs   = meta.date_range?.to   ? new Date(meta.date_range.to).getTime()   : Date.now();
+  const midTs  = (fromTs + toTs) / 2;
+  const midDate = new Date(midTs).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const halfLabel1 = `${new Date(fromTs).toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${midDate}`;
+  const halfLabel2 = `${midDate} – ${new Date(toTs).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`;
+
+  const citeEv = meta.citation_evidence ?? [];
+  const toneEv = (meta.tone_evidence ?? []) as { org:string; article_date:string }[];
+  // Combine both evidence arrays for coverage density
+  const allEv: { org: string; date: string }[] = [
+    ...citeEv.map((e) => ({ org: e.org, date: e.article_date })),
+    ...toneEv.map((e) => ({ org: e.org, date: e.article_date })),
+  ];
+
+  // Deduplicate by org+date to avoid double-counting
+  const seen = new Set<string>();
+  const deduped = allEv.filter((e) => {
+    const k = `${e.org}::${e.date}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  const momentumByOrg: Record<string, { first: number; second: number }> = {};
+  for (const org of meta.orgs) momentumByOrg[org] = { first: 0, second: 0 };
+  for (const e of deduped) {
+    if (!momentumByOrg[e.org]) momentumByOrg[e.org] = { first: 0, second: 0 };
+    const ts = new Date(e.date).getTime();
+    if (!isNaN(ts)) {
+      if (ts < midTs) momentumByOrg[e.org].first++;
+      else            momentumByOrg[e.org].second++;
+    }
+  }
+
+  const momentumRows = meta.orgs.map((org) => {
+    const { first, second } = momentumByOrg[org] ?? { first: 0, second: 0 };
+    const total = first + second;
+    if (total === 0) return `<tr><td>${org}</td><td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td><td style="color:var(--text-muted)">—</td><td><span class="badge tier-low">No data</span></td></tr>`;
+    const pctFirst  = Math.round((first  / total) * 100);
+    const pctSecond = Math.round((second / total) * 100);
+    const change  = second - first;
+    const changePct = first > 0 ? Math.round(((second - first) / first) * 100) : 100;
+    let trendLabel: string; let trendClass: string; let trendIcon: string;
+    if (change > 1 && changePct >= 20) {
+      trendLabel = "Accelerating"; trendClass = "tier-high";  trendIcon = "▲";
+    } else if (change < -1 && changePct <= -20) {
+      trendLabel = "Decelerating"; trendClass = "tier-low";   trendIcon = "▼";
+    } else {
+      trendLabel = "Steady";      trendClass = "tier-moderate"; trendIcon = "→";
+    }
+    // Simple bar visualisation
+    const barW1 = Math.round((first  / Math.max(first, second, 1)) * 80);
+    const barW2 = Math.round((second / Math.max(first, second, 1)) * 80);
+    const barHtml = `<div style="display:flex;gap:4px;align-items:center;margin-top:4px">
+      <div style="display:flex;flex-direction:column;gap:2px;flex:1">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="width:${barW1}px;height:8px;background:rgba(139,148,158,0.4);border-radius:2px"></div>
+          <span style="font-size:10px;color:var(--text-muted)">${first} (${pctFirst}%)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="width:${barW2}px;height:8px;background:var(--emerald);border-radius:2px;opacity:0.8"></div>
+          <span style="font-size:10px;color:var(--emerald)">${second} (${pctSecond}%)</span>
+        </div>
+      </div>
+    </div>`;
+    return `<tr>
+      <td><strong>${org}</strong></td>
+      <td>${barHtml}</td>
+      <td style="color:var(--text-muted);font-size:12px">${total}</td>
+      <td class="${change > 0 ? "good" : change < 0 ? "warn" : ""}">${change > 0 ? "+" : ""}${change}</td>
+      <td><span class="badge ${trendClass}">${trendIcon} ${trendLabel}</span></td>
+    </tr>`;
+  }).join("");
+
+  return `<div id="coverage-momentum" class="section">
+  <h2 class="section-title">${getTitle("coverage_momentum","Coverage Momentum")}
+    <span class="source-badge source-real">● Serper News API</span>
+  </h2>
+  <p class="section-desc">${getDesc("coverage_momentum","Whether coverage is accelerating or decelerating across the report period.")}</p>
+  <div class="metric-note">
+    Compares article volume in the <strong>first half</strong> (${halfLabel1}) vs <strong>second half</strong> (${halfLabel2}) of the report window.
+    Grey bar = first half · Green bar = second half. Derived from article evidence collected during media fetch — may undercount if coverage is thin.
+  </div>
   <table>
     <thead><tr>
-      <th>Organisation</th><th>Outlet</th><th>Tone</th><th>Representative Article</th><th>Date</th>
+      <th>Organisation</th><th>Distribution (H1 → H2)</th><th>Total Articles</th><th>Change</th><th>Momentum</th>
     </tr></thead>
-    <tbody>${toneEvidenceRows}</tbody>
+    <tbody>${momentumRows}</tbody>
   </table>
-</div>` : ""}
+</div>`;
+})() : ""}
+
+<!-- ══ CITATION QUALITY ════════════════════════════════════════════════════════ -->
+${isEnabled("citation_quality") ? (() => {
+  const citEvidence = meta.citation_evidence ?? [];
+  const citByOrg: Record<string, typeof citEvidence> = {};
+  for (const e of citEvidence) {
+    (citByOrg[e.org] = citByOrg[e.org] ?? []).push(e);
+  }
+
+  const cqRows = stats.media.map((m) => {
+    const dataCited   = m.direct_cites;
+    const namedMention = Math.max(0, m.total_mentions - m.direct_cites);
+    const notMentioned = 0; // In current impl all found articles count as mentions
+    const total = m.total_mentions;
+    const dataPct = total > 0 ? Math.round((dataCited / total) * 100) : 0;
+
+    const evidenceItems = (citByOrg[m.org] ?? []).slice(0, 5);
+    const evidenceCell = evidenceItems.length > 0
+      ? evidenceItems.map((e) =>
+          `<div style="margin-bottom:6px">
+            <a href="${e.article_link}" target="_blank" style="color:var(--emerald);text-decoration:none;font-size:12px">${e.article_title}</a>
+            <span style="color:var(--text-muted);font-size:11px"> · ${e.outlet} · ${e.article_date}</span>
+            ${e.snippet ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.4;font-style:italic">"${e.snippet}…"</div>` : ""}
+          </div>`
+        ).join("")
+      : `<span style="color:var(--text-muted);font-size:12px">—</span>`;
+
+    return `<tr>
+      <td>${m.org}</td>
+      <td>${total}</td>
+      <td class="${dataCited > 0 ? "highlight" : ""}">${dataCited} <span style="color:var(--text-muted);font-size:11px">(${dataPct}%)</span></td>
+      <td>${namedMention}</td>
+      <td style="color:var(--text-muted)">${notMentioned}</td>
+      <td>${evidenceCell}</td>
+    </tr>`;
+  }).join("");
+
+  return `<div id="citation-quality" class="section">
+  <h2 class="section-title">${getTitle("citation_quality","Citation Quality")}
+    <span class="source-badge source-real">● Serper News API</span>
+  </h2>
+  <p class="section-desc">${getDesc("citation_quality","How each org is cited: specific data/statistics cited vs. named in passing. Evidence links for every data citation.")}</p>
+  <div class="metric-note">
+    <strong>Data Cited</strong> = a specific number, statistic, report, or direct quote from this org appears in the article. <strong>Named Mention</strong> = org is named in the article but no specific data or quote from them is cited. These categories are mutually exclusive — each article falls into exactly one.
+  </div>
+  <table>
+    <thead><tr>
+      <th>Organisation</th><th>Total Mentions</th><th>Data Cited</th><th>Named Mention</th><th>Not Mentioned</th><th>Evidence (Data Cited Articles)</th>
+    </tr></thead>
+    <tbody>${cqRows}</tbody>
+  </table>
+</div>`;
+})() : ""}
+
+<!-- ══ EMERGING NARRATIVES ════════════════════════════════════════════════════ -->
+${isEnabled("emerging_narratives") ? (() => {
+  const narratives = meta.emerging_narratives ?? [];
+  if (narratives.length === 0) return "";
+
+  // Group by org
+  const byOrg: Record<string, typeof narratives> = {};
+  for (const n of narratives) (byOrg[n.org] = byOrg[n.org] ?? []).push(n);
+
+  const orgBlocks = meta.orgs.flatMap((org) => {
+    const items = byOrg[org] ?? [];
+    if (items.length === 0) return [];
+    const cards = items.map((n) => {
+      const articleLinks = (n.articles ?? []).map((a) =>
+        `<div style="margin-bottom:5px">
+          <a href="${a.link}" target="_blank"
+             style="color:var(--emerald);text-decoration:none;font-size:12px;line-height:1.5">${a.title}</a>
+          ${a.outlet || a.date ? `<span style="color:var(--text-muted);font-size:11px"> · ${[a.outlet,a.date].filter(Boolean).join(" · ")}</span>` : ""}
+        </div>`
+      ).join("");
+      const count = n.articles?.length ?? 0;
+      return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:12px">
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+          <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;flex:1">${n.topic}</div>
+          <span style="background:rgba(88,166,255,0.12);color:var(--accent);border:1px solid rgba(88,166,255,0.3);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap">INFERENCE</span>
+          ${count > 0 ? `<span style="background:rgba(0,179,126,0.15);color:var(--emerald);border:1px solid rgba(0,179,126,0.3);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:700">${count} article${count !== 1 ? "s" : ""}</span>` : ""}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.55;margin-bottom:12px;font-style:italic">${n.inference}</div>
+        ${count > 0 ? `<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:2px">${articleLinks}</div>` : ""}
+      </div>`;
+    }).join("");
+    return [`<div style="margin-bottom:20px">
+      <div class="subsection-title">${org}</div>
+      ${cards}
+    </div>`];
+  }).join("");
+
+  if (!orgBlocks) return "";
+  return `<div id="emerging-narratives" class="section">
+  <h2 class="section-title">${getTitle("emerging_narratives","Emerging Narratives")}
+    <span class="source-badge source-real" style="background:rgba(88,166,255,0.1);color:var(--accent);border-color:rgba(88,166,255,0.25)">● AI Inference</span>
+  </h2>
+  <p class="section-desc">${getDesc("emerging_narratives","AI-inferred topic clusters appearing repeatedly across coverage — topics gaining momentum distinct from each org's established focus.")}</p>
+  <div class="metric-note">
+    <strong>What is INFERENCE?</strong> These topics were not supplied as inputs — they were identified by the AI by pattern-matching across article titles and snippets collected during the media fetch.
+    A topic is flagged as "emerging" when it appears across multiple outlets or articles in a concentrated time window, suggesting growing journalistic interest.<br><br>
+    <strong>What do the article links mean?</strong> Each link is a real article fetched from a tracked outlet whose title or content matches the inferred topic. They are the evidence base — click to read the original coverage.
+    Because this is AI inference over limited article data, treat these as signals to investigate, not definitive conclusions.
+  </div>
+  ${orgBlocks}
+</div>`;
+})() : ""}
 
 <!-- ══ WIKIPEDIA CONTEXT ════════════════════════════════════════════════════════ -->
 ${isEnabled("wikipedia") && wikiSection ? wikiSection : ""}
@@ -616,11 +859,11 @@ ${isEnabled("aeo") ? `<div id="aeo" class="section">
   </h2>
   <p class="section-desc">${getDesc("aeo","How often each organisation appears in LLM responses to generic air-quality discovery queries. 5 queries per LLM, scored out of 20.")}</p>
   <div class="metric-note">
-    <strong>Visibility Score</strong> = mention weight (40) + position weight (30) + citation weight (30). <strong>Tier</strong>: High (>65% & pos ≤2) · Moderate (40–65%) · Low (&lt;40%). Queries are generic — they measure whether the org is mentioned unprompted.
+    <strong>Grade</strong> = composite of mention rate (40%), position (30%), and citation type (30%). S = Sector Leader · A = Strong · B = Good · C = Developing · D = Limited · E = Not yet visible. Hover grade for raw score. Queries are generic — they measure whether the org is mentioned <em>unprompted</em>, not when asked about it directly.
   </div>
   <table>
     <thead><tr>
-      <th>Organisation</th><th>LLM</th><th>Mentions</th><th>Avg Position</th><th>Citation</th><th>Direct Links</th><th>Score</th><th>Tier</th>
+      <th>Organisation</th><th>LLM</th><th>Mentions</th><th>Avg Position</th><th>Citation</th><th>Direct Links</th><th>Grade</th><th>Tier</th>
     </tr></thead>
     <tbody>${aeoRows}</tbody>
   </table>

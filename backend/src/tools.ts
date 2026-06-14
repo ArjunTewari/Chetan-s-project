@@ -20,17 +20,23 @@ const OUTLET_DOMAIN_MAP: Record<string, string> = {
   "The Independent":   "independent.co.uk",
   "The Times":         "thetimes.co.uk",
   "Telegraph":         "telegraph.co.uk",
-  // Indian national
+  // Indian national — print / digital
   "The Hindu":         "thehindu.com",
   "Hindustan Times":   "hindustantimes.com",
   "Times of India":    "timesofindia.com",
-  "NDTV":              "ndtv.com",
-  "India Today":       "indiatoday.in",
-  "News18":            "news18.com",
   "Indian Express":    "indianexpress.com",
+  "Deccan Herald":     "deccanherald.com",
   "Business Standard": "business-standard.com",
   "Mint":              "livemint.com",
   "Economic Times":    "economictimes.indiatimes.com",
+  // TV channels — English
+  "NDTV":              "ndtv.com",
+  "India Today":       "indiatoday.in",
+  "News18":            "news18.com",
+  // TV channels — Hindi
+  "Aaj Tak":           "aajtak.in",
+  "India TV":          "indiatv.in",
+  "ABP News":          "abplive.com",
   // Specialist env/science (auto-tried as backup)
   "Down To Earth":     "downtoearth.org.in",
   "Mongabay India":    "india.mongabay.com",
@@ -50,6 +56,11 @@ const BACKUP_OUTLETS_ENV = [
 ];
 
 const MIN_MENTIONS_THRESHOLD = 5; // if total org mentions < this, trigger backups
+
+/** TV channel outlets — used to create a separate TV Coverage section in reports */
+export const TV_CHANNELS_ENGLISH = ["NDTV", "News18", "India Today"];
+export const TV_CHANNELS_HINDI   = ["Aaj Tak", "India TV", "ABP News"];
+export const ALL_TV_CHANNEL_OUTLETS = [...TV_CHANNELS_ENGLISH, ...TV_CHANNELS_HINDI];
 
 export interface FetchSerperInput {
   orgs: string[];
@@ -131,6 +142,40 @@ export async function fetchSerper(input: FetchSerperInput) {
     ).length;
     return negCount / articles.length > 0.3 ? "N" : "A";
   };
+  // PR wire / press release aggregators — never third-party coverage
+  const PR_WIRE_DOMAINS = [
+    "prnewswire.com", "businesswire.com", "globenewswire.com",
+    "newswire.com", "prlog.org", "einpresswire.com", "pib.gov.in", "prwire.in",
+    "prnewswire.co.in", "accesswire.com",
+  ];
+  // Known AQ org own domains — exclude articles the org published about itself
+  const ORG_DOMAIN_HINTS: Record<string, string[]> = {
+    "ceew":      ["ceew.in"],
+    "cstep":     ["cstep.in"],
+    "wri":       ["wri.org"],
+    "icct":      ["theicct.org"],
+    "epic":      ["epic.uchicago.edu", "aqli.epic.uchicago.edu"],
+    "teri":      ["teriin.org", "teri.res.in"],
+    "cse":       ["cseindia.org"],
+    "care4air":  ["care4air.org"],
+    "iforest":   ["indiaforrenewables.org"],
+  };
+  // Returns true if the article comes from a genuine third-party outlet
+  const isThirdParty = (link: string, orgName: string): boolean => {
+    const url = (link ?? "").toLowerCase();
+    if (PR_WIRE_DOMAINS.some((d) => url.includes(d))) return false;
+    const orgKey = orgName.toLowerCase().replace(/[^a-z]/g, "");
+    for (const [key, domains] of Object.entries(ORG_DOMAIN_HINTS)) {
+      if (orgKey.includes(key) && domains.some((d) => url.includes(d))) return false;
+    }
+    // Generic heuristic: article domain contains the first 5+ chars of the org slug
+    const abbrev = orgKey.slice(0, Math.min(6, orgKey.length));
+    if (abbrev.length >= 4) {
+      try { if (new URL(link).hostname.includes(abbrev)) return false; } catch {}
+    }
+    return true;
+  };
+
   const scoreResult = (articles: ArticleRow[], orgName: string): OutletResult => {
     const mentions = articles.length;
     const dofollow = Math.floor(mentions * 0.6);
@@ -189,10 +234,11 @@ export async function fetchSerper(input: FetchSerperInput) {
         if (articles.length) { tier = 4; }
       }
 
-      const res = scoreResult(articles, org);
+      const thirdParty = articles.filter((a) => isThirdParty(a.link, org));
+      const res = scoreResult(thirdParty, org);
       res.search_tier = tier;
       results[org][outlet] = res;
-      logger.info({ org, outlet, mentions: res.mentions, tier }, "Serper outlet done");
+      logger.info({ org, outlet, mentions: res.mentions, filtered: articles.length - thirdParty.length, tier }, "Serper outlet done");
     }
 
     // ── Phase 2: If total thin, auto-try backup specialist outlets ──────────
@@ -207,10 +253,11 @@ export async function fetchSerper(input: FetchSerperInput) {
           articles = await callSerper(`${org} "air quality" site:${domain}`) ?? [];
         }
         if (articles.length) {
-          const res = scoreResult(articles, org);
+          const tp = articles.filter((a) => isThirdParty(a.link, org));
+          const res = scoreResult(tp, org);
           res.search_tier = 5;
           results[org][backupOutlet] = res;
-          logger.info({ org, backupOutlet, mentions: articles.length }, "Backup outlet found");
+          logger.info({ org, backupOutlet, mentions: tp.length }, "Backup outlet found");
         }
       }
     }
@@ -219,9 +266,9 @@ export async function fetchSerper(input: FetchSerperInput) {
     const totalAfterBackup = Object.values(results[org]).reduce((s, r) => s + r.mentions, 0);
     if (totalAfterBackup < MIN_MENTIONS_THRESHOLD) {
       logger.info({ org }, "Still thin — running broad web search");
-      const broadArticles = await callSerper(
-        `${orgQuoted} ("air quality" OR "air pollution" OR "AQI" OR "PM2.5")`
-      ) ?? [];
+      const broadArticles = (await callSerper(
+        `${orgQuoted} ("air quality" OR "air pollution" OR "AQI" OR "PM2.5" OR "PM10" OR "ozone" OR "nitrogen dioxide" OR "black carbon" OR "ammonia" OR "carbon monoxide")`
+      ) ?? []).filter((a) => isThirdParty(a.link, org));
       if (broadArticles.length) {
         const res = scoreResult(broadArticles, org);
         res.search_tier = 6;
@@ -229,7 +276,8 @@ export async function fetchSerper(input: FetchSerperInput) {
         logger.info({ org, mentions: broadArticles.length }, "Broad search results added");
       } else {
         // Phase 4: Try with just org name + news (no topic restriction)
-        const newsOnly = await callSerper(`${orgQuoted} air pollution 2024 OR 2025`) ?? [];
+        const newsOnly = (await callSerper(`${orgQuoted} air pollution 2024 OR 2025`) ?? [])
+          .filter((a) => isThirdParty(a.link, org));
         if (newsOnly.length) {
           const res = scoreResult(newsOnly, org);
           res.search_tier = 7;
@@ -239,10 +287,15 @@ export async function fetchSerper(input: FetchSerperInput) {
     }
   }
 
-  // Build tone_evidence
+  // Build tone_evidence (one representative article per org×outlet)
   const tone_evidence: {
     org: string; outlet: string; tone: "A" | "N";
     article_title: string; article_link: string; article_date: string;
+  }[] = [];
+  // Build citation_evidence: articles where the org name appears in snippet/title (the "Data Cited" set)
+  const citation_evidence: {
+    org: string; outlet: string;
+    article_title: string; article_link: string; article_date: string; snippet: string;
   }[] = [];
   for (const [org, outlets] of Object.entries(results)) {
     for (const [outlet, data] of Object.entries(outlets)) {
@@ -253,6 +306,20 @@ export async function fetchSerper(input: FetchSerperInput) {
           article_title: rep.title, article_link: rep.link, article_date: rep.date,
         });
       }
+      // Collect articles that actually name the org (same logic as direct_cites)
+      (data.articles ?? [])
+        .filter((a) =>
+          a.snippet?.toLowerCase().includes(org.toLowerCase()) ||
+          a.title?.toLowerCase().includes(org.toLowerCase())
+        )
+        .slice(0, 3)
+        .forEach((a) => {
+          citation_evidence.push({
+            org, outlet,
+            article_title: a.title, article_link: a.link,
+            article_date: a.date, snippet: (a.snippet ?? "").slice(0, 220),
+          });
+        });
     }
   }
 
@@ -274,7 +341,7 @@ export async function fetchSerper(input: FetchSerperInput) {
   );
   logger.info({ data_quality }, "Serper data quality summary");
 
-  return { stub: false, data: results, date_range: input.date_range, tone_evidence, data_quality, serper_requests: serperRequestCount };
+  return { stub: false, data: results, date_range: input.date_range, tone_evidence, citation_evidence, data_quality, serper_requests: serperRequestCount };
 }
 
 function emptySerperResult() {
@@ -1043,18 +1110,27 @@ export async function fetchLLMVisibility(input: FetchLLMVisibilityInput) {
     query: string; org: string; llm: string; mentioned: boolean; position?: number;
   }[] = [];
 
+  // Queries sent to OpenAI (can handle up to 8); Gemini/Perplexity capped at 5 due to
+  // rate limits. Use the SAME slice that the internal callers use as the denominator so
+  // the X/5 display is always accurate — previously queries.length could be 8 while
+  // mentions.length was only 5, making normalisation wrong.
+  const QUERY_CAP_OPENAI  = 8;
+  const QUERY_CAP_DEFAULT = 5;
+
   for (const org of input.orgs) {
-    // Use generic queries — AEO measures unprompted, natural mentions.
-    // Run up to 8 queries for better statistical coverage.
-    const queries = input.queries.slice(0, 8);
-    logger.info({ org, queryCount: queries.length }, "LLM visibility queries (generic)");
+    logger.info({ org, totalQueries: input.queries.length }, "LLM visibility queries (generic)");
 
     for (const llm of input.llms) {
       const llmLower = llm.toLowerCase();
+      const isOpenAI = llmLower.includes("chatgpt") || llmLower.includes("openai");
+      // Use the effective query count that each LLM will actually process
+      const queryCap = isOpenAI ? QUERY_CAP_OPENAI : QUERY_CAP_DEFAULT;
+      const queries  = input.queries.slice(0, queryCap);
+
       let mentions: ParsedMention[] = [];
 
       try {
-        if ((llmLower.includes("chatgpt") || llmLower.includes("openai")) && openaiKey) {
+        if (isOpenAI && openaiKey) {
           mentions = await callOpenAI(queries, org, openaiKey, costs);
         } else if (llmLower.includes("perplexity") && pplxKey) {
           mentions = await callPerplexity(queries, org, pplxKey, costs);
@@ -1082,13 +1158,12 @@ export async function fetchLLMVisibility(input: FetchLLMVisibilityInput) {
       const citation_type = mention_count === 0 ? "None"
         : direct_links > 0 ? "Direct"
         : "Passing";
-      // Normalise to 20-query scale for comparability regardless of how many were run
+      // Normalise to 20-query scale; denominator = actual queries sent to this LLM (not a global cap)
       const normalised_count = Math.round((mention_count / queries.length) * 20);
 
-      // Store normalised count so X/20 display is always consistent with 20-query scale
       results.push({ org, llm, mention_count: normalised_count, avg_position, citation_type, direct_links });
 
-      // Record per-query results for transparency (shown in Sample Query Performance table)
+      // Record per-query results (shown in Sample Query Performance table)
       queries.forEach((q, i) => {
         const m = mentions[i];
         query_results.push({

@@ -21,22 +21,33 @@ interface ReportTemplate {
 }
 
 const DEFAULT_SECTIONS: TemplateSectionConfig[] = [
-  { id: "methodology",     enabled: true, title: "Methodology & Definitions",
-    description: "How each table is built, what the metrics mean, and which benchmarks are used." },
-  { id: "social",          enabled: true, title: "Social Media Engagement",
+  { id: "methodology",      enabled: true, title: "Methodology",
+    description: "How data was collected, filtered, and analysed." },
+  { id: "social",           enabled: true, title: "Social Media Engagement",
     description: "Reach and engagement across YouTube (Long-form + Shorts) and X." },
-  { id: "media",           enabled: true, title: "Media Coverage",
+  { id: "media",            enabled: true, title: "Media Coverage",
     description: "News mentions, dofollow links, direct citations, and journalist tone." },
-  { id: "journalist_tone", enabled: true, title: "Journalist Tone Evidence",
-    description: "Representative articles for each journalist tone classification." },
-  { id: "wikipedia",       enabled: true, title: "Organisation Context",
+  { id: "tv_coverage",         enabled: true, title: "TV Channel Coverage",
+    description: "Coverage across English and Hindi TV channels." },
+  { id: "coverage_momentum",   enabled: true, title: "Coverage Momentum",
+    description: "Accelerating vs decelerating coverage across the report period." },
+  { id: "citation_quality",    enabled: true, title: "Citation Quality",
+    description: "Data Cited vs. Named Mention — with evidence links." },
+  { id: "emerging_narratives", enabled: true, title: "Emerging Narratives",
+    description: "AI-inferred topic clusters gaining momentum across coverage." },
+  { id: "wikipedia",        enabled: true, title: "Organisation Context",
     description: "Background context from Wikipedia." },
-  { id: "aeo",             enabled: true, title: "AEO / LLM Visibility",
+  { id: "aeo",              enabled: true, title: "AEO / LLM Visibility",
     description: "How often each organisation appears in LLM responses." },
-  { id: "scorecards",      enabled: true, title: "Organisation Scorecards",
+  { id: "scorecards",       enabled: true, title: "Organisation Scorecards",
     description: "Weighted composite: Social 30% · Media 40% · AEO 30%." },
-  { id: "action_matrix",   enabled: true, title: "AI Insights — Action Matrix",
+  { id: "action_matrix",    enabled: true, title: "AI Insights — Action Matrix",
     description: "Data-anchored priority actions per organisation." },
+];
+
+const DEFAULT_SCOPE_KEYWORDS = [
+  "AQI", "PM2.5", "PM10", "air pollution", "air quality", "smog", "clean air", "NCAP", "GRAP",
+  "Black Carbon", "Ozone", "Ammonia", "Carbon Monoxide", "Lead", "Nitrogen Dioxide", "Methane",
 ];
 
 interface LLMApiCost { service: string; model: string; requests: number; input_tokens: number; output_tokens: number; cost_usd: number; }
@@ -143,6 +154,15 @@ export default function App() {
     } catch { /* ignore */ }
     return { reportTitle: "", clientName: "", sections: DEFAULT_SECTIONS.map(s => ({ ...s })) };
   });
+  const [scopeKeywords, setScopeKeywords] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("emerald_scope_keywords");
+      if (saved) return JSON.parse(saved) as string[];
+    } catch { /* ignore */ }
+    return [...DEFAULT_SCOPE_KEYWORDS];
+  });
+  const [scopeInput, setScopeInput] = useState("");
+  const [showScopeEditor, setShowScopeEditor] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -174,6 +194,26 @@ export default function App() {
       clientName: "",
       sections: DEFAULT_SECTIONS.map(s => ({ ...s })),
     }));
+  };
+
+  const addScopeKeyword = (kw: string) => {
+    const trimmed = kw.trim();
+    if (!trimmed || scopeKeywords.includes(trimmed)) return;
+    const next = [...scopeKeywords, trimmed];
+    setScopeKeywords(next);
+    localStorage.setItem("emerald_scope_keywords", JSON.stringify(next));
+    setScopeInput("");
+  };
+
+  const removeScopeKeyword = (kw: string) => {
+    const next = scopeKeywords.filter((k) => k !== kw);
+    setScopeKeywords(next);
+    localStorage.setItem("emerald_scope_keywords", JSON.stringify(next));
+  };
+
+  const resetScope = () => {
+    setScopeKeywords([...DEFAULT_SCOPE_KEYWORDS]);
+    localStorage.setItem("emerald_scope_keywords", JSON.stringify(DEFAULT_SCOPE_KEYWORDS));
   };
 
   // Fade out welcome on first user message
@@ -345,7 +385,13 @@ export default function App() {
     setInput("");
     setLoading(true);
 
-    const userMsg: Message = { id: uid(), role: "user", content: text };
+    // Append scope keywords when it looks like a report generation request
+    const isGenerate = /\b(generate|report|analyse|analyze|run|create)\b/i.test(text);
+    const finalText = isGenerate && scopeKeywords.length > 0
+      ? `${text}\n\nScope filter: ${scopeKeywords.join(", ")}`
+      : text;
+
+    const userMsg: Message = { id: uid(), role: "user", content: finalText };
     const assistantMsg: Message = {
       id: uid(),
       role: "assistant",
@@ -359,7 +405,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/conversations/${convId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, reportTemplate }),
+        body: JSON.stringify({ message: finalText, reportTemplate }),
       });
 
       if (!res.body) throw new Error("No response body");
@@ -669,6 +715,61 @@ export default function App() {
               >
                 Reset to defaults
               </button>
+            </div>
+          )}
+        </div>
+
+        {/* Scope Filter */}
+        <div style={styles.sideSection}>
+          <button
+            style={{ ...styles.sideSectionTitle, all: "unset", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const, color: "#484f58" }}
+            onClick={() => setShowScopeEditor(v => !v)}
+          >
+            <span>Scope Filter</span>
+            <span style={{ fontSize: 10, color: "#484f58", opacity: 0.7 }}>{showScopeEditor ? "▲" : "▼"}</span>
+          </button>
+
+          {showScopeEditor && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10, color: "#484f58", marginBottom: 8, lineHeight: 1.5 }}>
+                Keywords used to filter AQ-relevant articles. Applied automatically when generating reports.
+              </div>
+              {/* Keyword tags */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
+                {scopeKeywords.map((kw) => (
+                  <span key={kw} style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: "rgba(0,179,126,0.1)", border: "1px solid rgba(0,179,126,0.25)",
+                    borderRadius: 4, padding: "2px 6px", fontSize: 11, color: "#00b37e",
+                  }}>
+                    {kw}
+                    <button
+                      onClick={() => removeScopeKeyword(kw)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#00b37e", padding: 0, fontSize: 12, lineHeight: 1, opacity: 0.7 }}
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+              {/* Add keyword */}
+              <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+                <input
+                  style={{ ...styles.tmplInput, flex: 1, fontSize: 11 }}
+                  placeholder="Add keyword (e.g. VOC, HAPS)"
+                  value={scopeInput}
+                  onChange={(e) => setScopeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { addScopeKeyword(scopeInput); e.preventDefault(); } }}
+                />
+                <button
+                  style={{ ...styles.newChatBtn, fontSize: 10, padding: "3px 8px" }}
+                  className="quick-btn"
+                  onClick={() => addScopeKeyword(scopeInput)}
+                >+ Add</button>
+              </div>
+              <button
+                style={{ ...styles.newChatBtn, marginTop: 2, fontSize: 10, padding: "3px 8px", background: "none", border: "1px solid #333", color: "#666" }}
+                className="quick-btn"
+                onClick={resetScope}
+              >Reset to defaults</button>
             </div>
           )}
         </div>
