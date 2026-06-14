@@ -991,13 +991,53 @@ if (counterEl) {
 }
 
 // ── FORM SUBMIT ──
-function handleSubmit(btn) {
+async function handleSubmit(btn) {
+  const name      = document.getElementById('name').value.trim();
+  const phone     = document.getElementById('phone').value.trim();
+  const business  = document.getElementById('business').value;
+  const challenge = document.getElementById('challenge').value.trim();
+
+  if (!name || !phone) {
+    alert('Please enter your name and phone number.');
+    return;
+  }
+
   btn.textContent = 'Sending...';
   btn.disabled = true;
-  setTimeout(() => {
-    btn.textContent = '✓ Received — we will call you within 24 hours';
-    btn.style.background = '#16a34a';
-  }, 1200);
+
+  try {
+    const res = await fetch('https://api.web3forms.com/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        access_key: 'f0e7f085-565e-4944-8ae3-186b93000cac',
+        subject: 'New Inquiry — Emerald AI Solutions',
+        from_name: 'Emerald AI Website',
+        Name: name,
+        Phone: phone,
+        'Business Type': business || 'Not specified',
+        'Challenge / Message': challenge || 'Not provided'
+      })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      btn.textContent = '✓ Received — we will call you within 24 hours';
+      btn.style.background = '#16a34a';
+      ['name','phone','challenge'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('business').selectedIndex = 0;
+    } else {
+      throw new Error(data.message || 'Submission failed');
+    }
+  } catch (err) {
+    btn.textContent = 'Something went wrong — please try again';
+    btn.style.background = '#dc2626';
+    btn.disabled = false;
+    setTimeout(() => {
+      btn.textContent = 'Request a Callback';
+      btn.style.background = '';
+    }, 3000);
+  }
 }
 </script>
 </body>
